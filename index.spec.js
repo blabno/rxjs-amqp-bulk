@@ -16,16 +16,12 @@ function publish(i) {
     exchange.publish(i, {key: 'hello'})
 }
 
-function rabbitToObservable(queue) {
+function rabbitToObservable(consume) {
 
     return Rx.Observable.create((observer) => {
-
-        rabbit
-            .default()
-            .queue({name: 'hello'})
-            .consume((data, ack, nack, msg) => {
-                observer.onNext({data, ack, nack, msg})
-            }, {noAck: true})
+        consume((data, ack, nack, msg) => {
+            observer.onNext({data, ack, nack, msg})
+        })
     })
 }
 
@@ -33,12 +29,17 @@ describe('Rxjs AMQP', ()=> {
 
     before((done)=> {
         exchange.on('ready', done)
-    })
+    });
 
     it('should convert a jackrabbit queue into an observable', (done)=> {
 
-        rabbitToObservable()
-            .take(10)
+        const queue = rabbit
+            .default()
+            .queue({name: 'hello'})
+
+        const consume = _.partialRight(queue.consume, {noAck: true})
+
+        rabbitToObservable(consume)
             .subscribe(
                 (event)=> {
                     if (event.data == 9) {
