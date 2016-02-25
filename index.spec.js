@@ -29,7 +29,7 @@ describe('Rxjs AMQP', ()=> {
         exchange.on('ready', done)
     });
 
-    it('should convert a jackrabbit queue into an observable', (done)=> {
+    it('converts a jackrabbit queue into an observable', (done)=> {
 
         const queue = exchange.queue({name: 'hello'})
 
@@ -59,16 +59,20 @@ describe('Rxjs AMQP', ()=> {
         const consume = _.partialRight(queue.consume, {noAck: true})
 
         rabbitToObservable(consume)
+            .map((event) => {
+                console.log('init Promise')
+                return Promise.delay(1000).then(()=> {console.log('resolve Promise') ; return event.data})
+            })
             .bufferWithCount(5)
             .subscribe(
-                (events)=> {
+                (eventPromises)=> {
 
-                    const actual = _.map(events, 'data')
-                    const expected = range.slice(0, 5)
-
-                    expect(expected).to.eql(actual)
-
-                    done()
+                    console.log('after buffer')
+                    Promise.all(eventPromises).then((events) => {
+                        const expected = range.slice(0, 5)
+                        expect(expected).to.eql(events)
+                        done()
+                    })
 
                 },
                 (err) => {
