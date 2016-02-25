@@ -54,7 +54,7 @@ describe('Rxjs AMQP', ()=> {
 
         const range = _.range(0, 5).map((i)=> `${i}`)
 
-        const queue = exchange.queue({name: 'hello'})
+        const queue = exchange.queue({name: 'hello2'})
 
         const consume = _.partialRight(queue.consume, {noAck: true})
 
@@ -77,7 +77,7 @@ describe('Rxjs AMQP', ()=> {
             );
 
         range.forEach((i) =>
-            exchange.publish(i, {key: 'hello'}))
+            exchange.publish(i, {key: 'hello2'}))
     })
 
 })
