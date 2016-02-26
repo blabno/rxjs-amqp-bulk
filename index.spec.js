@@ -44,19 +44,19 @@ describe('Rxjs AMQP', ()=> {
         _.range(5).map((i)=> `${i}`).forEach((i) => exchange.publish(i, {key: 'hello'}))
     })
 
-    it('should buffer messages', (done)=> {
+    it('should execute the afterBuffer function with the results and ack the source messages', (done)=> {
 
         const range = _.range(0, 5).map((i)=> `${i}`)
         const queue = exchange.queue({name: 'hello', prefetch: 10})
         const consume = _.partialRight(queue.consume)
 
         const mapFn = (event) => {
-            return Promise.delay(1000).then(()=> {
+            return Promise.delay(1).then(()=> {
                 return _.merge({}, event, {data: 'a' + event.data})
             })
         }
 
-        var subscription = rabbitToReliableBufferedObservable(consume, mapFn);
+        var subscription = reliableBufferedObservable(rabbitToObservable(consume), mapFn, ()=> Promise.resolve())
 
         subscription
             .do((reflectedResults) => {
@@ -75,19 +75,52 @@ describe('Rxjs AMQP', ()=> {
             )
             .subscribe()
 
-        range.forEach((i) =>
-            exchange.publish(i, {key: 'hello'}))
+        range.forEach((i) => exchange.publish(i, {key: 'hello'}))
     })
 
-    function rabbitToReliableBufferedObservable(consume, mapFn) {
-        return rabbitToObservable(consume)
+    it('should not pass down the failures to the afterBuffer function and nack the source messages', (done)=> {
+
+        const range = _.range(0, 5).map((i)=> `${i}`)
+        const queue = exchange.queue({name: 'hello', prefetch: 10})
+        const consume = _.partialRight(queue.consume)
+
+        const mapFn = (event) => {
+            return Promise.delay(1).then(()=> {
+                if (_.toNumber(event.data) < 3) {
+                    return _.merge({}, event, {data: 'a' + event.data})
+                } else {
+                    throw new Error('foobar')
+                }
+            })
+        }
+
+        var subscription = reliableBufferedObservable(rabbitToObservable(consume), mapFn, (results)=> {
+            expect(results).to.have.length(3)
+            return Promise.resolve()
+        });
+
+        subscription
+            .do((reflectedResults) => {
+                    done()
+                },
+                (err) => {
+                    done(err)
+                }
+            )
+            .subscribe()
+
+        range.forEach((i) => exchange.publish(i, {key: 'hello'}))
+    })
+
+    function reliableBufferedObservable(rabbitObservable, mapFn, afterBufferFn) {
+        return rabbitObservable
             .map((event) => {
                 return {
                     source: event,
                     result: mapFn(event)
                 }
             })
-            .bufferWithCount(5)
+            .bufferWithTimeOrCount(5000, 5)
             .flatMap((eventsWithResult)=> {
 
                 var resultPromises = _.map(eventsWithResult, 'result');
@@ -95,10 +128,12 @@ describe('Rxjs AMQP', ()=> {
                     return promise.reflect();
                 });
 
+                const fulfilledPromises = []
+
                 return Promise.all(reflectedResults)
                     .map(function (reflectedResult, index) {
                         if (reflectedResult.isFulfilled()) {
-                            reflectedResult.value().ack()
+                            fulfilledPromises.push(reflectedResult.value())
                         } else {
                             console.error('promise rejected', reflectedResult.reason());
                             eventsWithResult[index].source.nack()
@@ -106,7 +141,11 @@ describe('Rxjs AMQP', ()=> {
                         return reflectedResult
                     })
                     .then((reflectedResults)=> {
-                        return reflectedResults
+                        return afterBufferFn(fulfilledPromises)
+                            .then(()=> {
+                                fulfilledPromises.forEach((fulfilledPromise)=> {fulfilledPromise.ack()})
+                                return reflectedResults
+                            })
                     })
             });
     }
