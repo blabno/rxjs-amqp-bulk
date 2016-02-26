@@ -53,32 +53,55 @@ describe('Rxjs AMQP', ()=> {
     it('should buffer messages', (done)=> {
 
         const range = _.range(0, 5).map((i)=> `${i}`)
-
-        const queue = exchange.queue({name: 'hello2'})
-
-        const consume = _.partialRight(queue.consume, {noAck: true})
+        const queue = exchange.queue({name: 'hello2', prefetch: 10})
+        const consume = _.partialRight(queue.consume)
 
         rabbitToObservable(consume)
             .map((event) => {
-                console.log('init Promise')
-                return Promise.delay(1000).then(()=> {console.log('resolve Promise') ; return event.data})
+                return {
+                    source: event,
+                    result: Promise.delay(1000).then(()=> {
+                        return _.merge({}, event, {data: 'a' + event.data})
+                    })
+                }
             })
             .bufferWithCount(5)
-            .subscribe(
-                (eventPromises)=> {
+            .flatMap((eventsWithResult)=> {
 
-                    console.log('after buffer')
-                    Promise.all(eventPromises).then((events) => {
-                        const expected = range.slice(0, 5)
-                        expect(expected).to.eql(events)
-                        done()
+                var resultPromises = _.map(eventsWithResult, 'result');
+                var reflectedResults = resultPromises.map(function (promise) {
+                    return promise.reflect();
+                });
+
+                return Promise.all(reflectedResults)
+                    .map(function (reflectedResult, index) {
+                        if (reflectedResult.isFulfilled()) {
+                            reflectedResult.value().ack()
+                        } else {
+                            console.error('promise rejected', reflectedResult.reason());
+                            eventsWithResult[index].source.nack()
+                        }
+                        return reflectedResult
                     })
-
+                    .then((reflectedResults)=> {
+                        return reflectedResults
+                    })
+            })
+            .map((reflectedResults) => {
+                    const expected = _.map(range.slice(0, 5), (item)=> {
+                        return 'a' + item
+                    })
+                    const resultData = _.map(reflectedResults, (reflectedResult)=> {
+                        return reflectedResult.value().data
+                    });
+                    expect(expected).to.eql(resultData)
+                    done()
                 },
                 (err) => {
                     done(err)
                 }
-            );
+            )
+            .subscribe()
 
         range.forEach((i) =>
             exchange.publish(i, {key: 'hello2'}))
