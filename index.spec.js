@@ -6,6 +6,7 @@ const jackrabbit = require('jackrabbit')
 const _ = require('lodash')
 const Rx = require('rx')
 const url = require('url')
+const amqp = require('jackrabbit/node_modules/amqplib');
 
 Promise.longStackTraces()
 chai.config.includeStack = true
@@ -16,8 +17,20 @@ describe('Rxjs AMQP', ()=> {
 
     beforeEach((done)=> {
         rabbit = jackrabbit(`amqp://${dockerHostName}:5672`)
-        exchange = rabbit.default()
-        exchange.on('ready', done)
+        rabbit.on('connected', ()=> {
+            const connection = rabbit.getInternals().connection;
+            connection.createChannel(function(err, ch) {
+                ch.purgeQueue('hello', (err, ok)=> {
+                   if (ok) {
+                        ch.close(()=> {
+                            exchange = rabbit.default()
+                            exchange.on('ready', done)
+                        })
+                    }
+                })
+           });
+        })
+
     });
 
     afterEach((done)=> {
