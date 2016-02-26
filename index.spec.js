@@ -12,15 +12,6 @@ chai.config.includeStack = true
 
 const dockerHostName = url.parse(process.env.DOCKER_HOST).hostname
 
-function rabbitToObservable(consume) {
-
-    return Rx.Observable.create((observer) => {
-        consume((data, ack, nack, msg) => {
-            observer.onNext({data, ack, nack, msg})
-        })
-    })
-}
-
 describe('Rxjs AMQP', ()=> {
 
     beforeEach((done)=> {
@@ -30,7 +21,7 @@ describe('Rxjs AMQP', ()=> {
     });
 
     afterEach((done)=> {
-      rabbit.close(done)
+        rabbit.close(done)
     })
 
     it('converts a jackrabbit queue into an observable', (done)=> {
@@ -59,13 +50,41 @@ describe('Rxjs AMQP', ()=> {
         const queue = exchange.queue({name: 'hello', prefetch: 10})
         const consume = _.partialRight(queue.consume)
 
-        rabbitToObservable(consume)
+        const mapFn = (event) => {
+            return Promise.delay(1000).then(()=> {
+                return _.merge({}, event, {data: 'a' + event.data})
+            })
+        }
+
+        var subscription = rabbitToReliableBufferedObservable(consume, mapFn);
+
+        subscription
+            .do((reflectedResults) => {
+                    const expected = _.map(range.slice(0, 5), (item)=> {
+                        return 'a' + item
+                    })
+                    const resultData = _.map(reflectedResults, (reflectedResult)=> {
+                        return reflectedResult.value().data
+                    });
+                    expect(expected).to.eql(resultData)
+                    done()
+                },
+                (err) => {
+                    done(err)
+                }
+            )
+            .subscribe()
+
+        range.forEach((i) =>
+            exchange.publish(i, {key: 'hello'}))
+    })
+
+    function rabbitToReliableBufferedObservable(consume, mapFn) {
+        return rabbitToObservable(consume)
             .map((event) => {
                 return {
                     source: event,
-                    result: Promise.delay(1000).then(()=> {
-                        return _.merge({}, event, {data: 'a' + event.data})
-                    })
+                    result: mapFn(event)
                 }
             })
             .bufferWithCount(5)
@@ -89,26 +108,17 @@ describe('Rxjs AMQP', ()=> {
                     .then((reflectedResults)=> {
                         return reflectedResults
                     })
-            })
-            .map((reflectedResults) => {
-                    const expected = _.map(range.slice(0, 5), (item)=> {
-                        return 'a' + item
-                    })
-                    const resultData = _.map(reflectedResults, (reflectedResult)=> {
-                        return reflectedResult.value().data
-                    });
-                    expect(expected).to.eql(resultData)
-                    done()
-                },
-                (err) => {
-                    done(err)
-                }
-            )
-            .subscribe()
+            });
+    }
 
-        range.forEach((i) =>
-            exchange.publish(i, {key: 'hello'}))
-    })
+    function rabbitToObservable(consume) {
+
+        return Rx.Observable.create((observer) => {
+            consume((data, ack, nack, msg) => {
+                observer.onNext({data, ack, nack, msg})
+            })
+        })
+    }
 
 })
 
