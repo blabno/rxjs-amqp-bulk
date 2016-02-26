@@ -35,8 +35,8 @@ describe('Rxjs AMQP', ()=> {
 
     });
 
-    afterEach((done)=> {
-        rabbit.close(done)
+    afterEach(()=> {
+        rabbit.close()
     })
 
     it('converts a jackrabbit queue into an observable', (done)=> {
@@ -50,10 +50,25 @@ describe('Rxjs AMQP', ()=> {
                     if (event.data === `4`) {
                         done()
                     }
-                },
-                (err) => {
-                    done(err)
                 }
+            );
+
+        _.range(5).map((i)=> `${i}`).forEach((i) => exchange.publish(i, {key: 'hello'}))
+    })
+
+    it('emits the rabbit connection error with the observer.onError', (done)=> {
+
+        const queue = exchange.queue({name: 'hello'})
+        const consume = _.partialRight(queue.consume, {noAck: true})
+
+        rabbitToObservable(consume)
+            .subscribe(
+                (event)=> {
+                    if (event.data === `3`) {
+                        rabbit.close()
+                    }
+                },
+                (err) => done()
             );
 
         _.range(5).map((i)=> `${i}`).forEach((i) => exchange.publish(i, {key: 'hello'}))
@@ -69,19 +84,12 @@ describe('Rxjs AMQP', ()=> {
             })
         }
 
-        const ack = chai.spy(()=> {})
-        const nack = chai.spy(()=> {})
-
-        const rabbitObservable = Rx.Observable.create((observer) => {
-            range.forEach((i) => {
-                observer.onNext({
-                    data: i,
-                    ack,
-                    nack,
-                    msg: {}
-                })
-            })
+        const ack = chai.spy(()=> {
         })
+        const nack = chai.spy(()=> {
+        })
+
+        var rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
         var subscription = reliableBufferedObservable(rabbitObservable, mapFn, (results)=> {
             expect(results).to.have.length(5)
@@ -119,19 +127,12 @@ describe('Rxjs AMQP', ()=> {
             })
         }
 
-        const ack = chai.spy(()=> {})
-        const nack = chai.spy(()=> {})
-
-        const rabbitObservable = Rx.Observable.create((observer) => {
-            range.forEach((i) => {
-                observer.onNext({
-                    data: i,
-                    ack,
-                    nack,
-                    msg: {}
-                })
-            })
+        const ack = chai.spy(()=> {
         })
+        const nack = chai.spy(()=> {
+        })
+
+        const rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
         const subscription = reliableBufferedObservable(rabbitObservable, mapFn, (results)=> {
             expect(results).to.have.length(3)
@@ -147,8 +148,6 @@ describe('Rxjs AMQP', ()=> {
                 done
             )
             .subscribe()
-
-
     })
 
     function reliableBufferedObservable(rabbitObservable, mapFn, afterBufferFn) {
@@ -162,10 +161,10 @@ describe('Rxjs AMQP', ()=> {
             .bufferWithTimeOrCount(5000, 5)
             .flatMap((eventsWithResult)=> {
 
-                var resultPromises = _.map(eventsWithResult, 'result');
-                var reflectedResults = resultPromises.map(function (promise) {
-                    return promise.reflect();
-                });
+                const resultPromises = _.map(eventsWithResult, 'result')
+                const reflectedResults = resultPromises.map(function (promise) {
+                    return promise.reflect()
+                })
 
                 const fulfilledPromises = []
 
@@ -174,7 +173,7 @@ describe('Rxjs AMQP', ()=> {
                         if (reflectedResult.isFulfilled()) {
                             fulfilledPromises.push(reflectedResult.value())
                         } else {
-                            console.error('promise rejected', reflectedResult.reason());
+                            console.error('promise rejected', reflectedResult.reason())
                             eventsWithResult[index].source.nack()
                         }
                         return reflectedResult
@@ -197,7 +196,24 @@ describe('Rxjs AMQP', ()=> {
             consume((data, ack, nack, msg) => {
                 observer.onNext({data, ack, nack, msg})
             })
+
+            rabbit.on('error', (err)=> {
+                observer.onError(new Error(err))
+            })
         })
+    }
+
+    function fakeRabbitObservableWithSpies(range, ack, nack) {
+        return Rx.Observable.create((observer) => {
+            range.forEach((i) => {
+                observer.onNext({
+                    data: i,
+                    ack,
+                    nack,
+                    msg: {}
+                })
+            })
+        });
     }
 
 })
