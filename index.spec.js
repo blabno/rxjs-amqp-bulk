@@ -11,8 +11,6 @@ Promise.longStackTraces()
 chai.config.includeStack = true
 
 const dockerHostName = url.parse(process.env.DOCKER_HOST).hostname
-const rabbit = jackrabbit(`amqp://${dockerHostName}:5672`)
-const exchange = rabbit.default()
 
 function rabbitToObservable(consume) {
 
@@ -25,14 +23,19 @@ function rabbitToObservable(consume) {
 
 describe('Rxjs AMQP', ()=> {
 
-    before((done)=> {
+    beforeEach((done)=> {
+        rabbit = jackrabbit(`amqp://${dockerHostName}:5672`)
+        exchange = rabbit.default()
         exchange.on('ready', done)
     });
+
+    afterEach((done)=> {
+      rabbit.close(done)
+    })
 
     it('converts a jackrabbit queue into an observable', (done)=> {
 
         const queue = exchange.queue({name: 'hello'})
-
         const consume = _.partialRight(queue.consume, {noAck: true})
 
         rabbitToObservable(consume)
@@ -53,7 +56,7 @@ describe('Rxjs AMQP', ()=> {
     it('should buffer messages', (done)=> {
 
         const range = _.range(0, 5).map((i)=> `${i}`)
-        const queue = exchange.queue({name: 'hello2', prefetch: 10})
+        const queue = exchange.queue({name: 'hello', prefetch: 10})
         const consume = _.partialRight(queue.consume)
 
         rabbitToObservable(consume)
@@ -104,7 +107,7 @@ describe('Rxjs AMQP', ()=> {
             .subscribe()
 
         range.forEach((i) =>
-            exchange.publish(i, {key: 'hello2'}))
+            exchange.publish(i, {key: 'hello'}))
     })
 
 })
