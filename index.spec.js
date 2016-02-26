@@ -74,11 +74,11 @@ describe('Rxjs AMQP', ()=> {
         _.range(5).map((i)=> `${i}`).forEach((i) => exchange.publish(i, {key: 'hello'}))
     })
 
-    it('should execute the afterBuffer function with the results and ack the source messages', (done)=> {
+    it('should execute the processBuffer function with the results and ack the source messages', (done)=> {
 
         const range = _.range(0, 5).map((i)=> `${i}`)
 
-        const mapFn = (event) => {
+        const mapSource = (event) => {
             return Promise.delay(1).then(()=> {
                 return _.merge({}, event, {data: 'a' + event.data})
             })
@@ -91,7 +91,7 @@ describe('Rxjs AMQP', ()=> {
 
         var rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
-        var subscription = reliableBufferedObservable(rabbitObservable, mapFn, (results)=> {
+        var subscription = reliableBufferedObservable(rabbitObservable, mapSource, (results)=> {
             expect(results).to.have.length(5)
             const expected = _.map(range.slice(0, 5), (item)=> {
                 return 'a' + item
@@ -113,11 +113,11 @@ describe('Rxjs AMQP', ()=> {
         range.forEach((i) => exchange.publish(i, {key: 'hello'}))
     })
 
-    it('should not pass down the failures to the afterBuffer function and nack the source messages', (done)=> {
+    it('should not pass down the failures to the processBuffer function and nack the source messages', (done)=> {
 
         const range = _.range(0, 5).map((i)=> `${i}`)
 
-        const mapFn = (event) => {
+        const mapSource = (event) => {
             return Promise.delay(1).then(()=> {
                 if (_.toNumber(event.data) < 3) {
                     return _.merge({}, event, {data: 'a' + event.data})
@@ -134,7 +134,7 @@ describe('Rxjs AMQP', ()=> {
 
         const rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
-        const subscription = reliableBufferedObservable(rabbitObservable, mapFn, (results)=> {
+        const subscription = reliableBufferedObservable(rabbitObservable, mapSource, (results)=> {
             expect(results).to.have.length(3)
             return Promise.resolve()
         })
@@ -149,73 +149,73 @@ describe('Rxjs AMQP', ()=> {
             )
             .subscribe()
     })
+})
 
-    function reliableBufferedObservable(rabbitObservable, mapFn, afterBufferFn) {
-        return rabbitObservable
-            .map((event) => {
-                return {
-                    source: event,
-                    result: mapFn(event)
-                }
+function reliableBufferedObservable(rabbitObservable, mapSource, processBuffer) {
+    return rabbitObservable
+        .map((event) => {
+            return {
+                source: event,
+                result: mapSource(event)
+            }
+        })
+        .bufferWithTimeOrCount(5000, 5)
+        .flatMap((eventsWithResult)=> {
+
+            const resultPromises = _.map(eventsWithResult, 'result')
+            const reflectedResults = resultPromises.map(function (promise) {
+                return promise.reflect()
             })
-            .bufferWithTimeOrCount(5000, 5)
-            .flatMap((eventsWithResult)=> {
 
-                const resultPromises = _.map(eventsWithResult, 'result')
-                const reflectedResults = resultPromises.map(function (promise) {
-                    return promise.reflect()
+            const fulfilledPromises = []
+
+            return Promise.all(reflectedResults)
+                .map(function (reflectedResult, index) {
+                    if (reflectedResult.isFulfilled()) {
+                        fulfilledPromises.push(reflectedResult.value())
+                    } else {
+                        console.error('promise rejected', reflectedResult.reason())
+                        eventsWithResult[index].source.nack()
+                    }
+                    return reflectedResult
                 })
-
-                const fulfilledPromises = []
-
-                return Promise.all(reflectedResults)
-                    .map(function (reflectedResult, index) {
-                        if (reflectedResult.isFulfilled()) {
-                            fulfilledPromises.push(reflectedResult.value())
-                        } else {
-                            console.error('promise rejected', reflectedResult.reason())
-                            eventsWithResult[index].source.nack()
-                        }
-                        return reflectedResult
-                    })
-                    .then((reflectedResults)=> {
-                        return afterBufferFn(fulfilledPromises)
-                            .then(()=> {
-                                fulfilledPromises.forEach((fulfilledPromise)=> {
-                                    fulfilledPromise.ack()
-                                })
-                                return reflectedResults
+                .then((reflectedResults)=> {
+                    return processBuffer(fulfilledPromises)
+                        .then(()=> {
+                            fulfilledPromises.forEach((fulfilledPromise)=> {
+                                fulfilledPromise.ack()
                             })
-                    })
-            });
-    }
+                            return reflectedResults
+                        })
+                })
+        });
+}
 
-    function rabbitToObservable(consume) {
+function rabbitToObservable(consume) {
 
-        return Rx.Observable.create((observer) => {
-            consume((data, ack, nack, msg) => {
-                observer.onNext({data, ack, nack, msg})
-            })
+    return Rx.Observable.create((observer) => {
+        consume((data, ack, nack, msg) => {
+            observer.onNext({data, ack, nack, msg})
+        })
 
-            rabbit.on('error', (err)=> {
-                observer.onError(new Error(err))
+        rabbit.on('error', (err)=> {
+            observer.onError(new Error(err))
+        })
+    })
+}
+
+function fakeRabbitObservableWithSpies(range, ack, nack) {
+    return Rx.Observable.create((observer) => {
+        range.forEach((i) => {
+            observer.onNext({
+                data: i,
+                ack,
+                nack,
+                msg: {}
             })
         })
-    }
+    });
+}
 
-    function fakeRabbitObservableWithSpies(range, ack, nack) {
-        return Rx.Observable.create((observer) => {
-            range.forEach((i) => {
-                observer.onNext({
-                    data: i,
-                    ack,
-                    nack,
-                    msg: {}
-                })
-            })
-        });
-    }
-
-})
 
 
