@@ -145,7 +145,49 @@ describe('Rxjs AMQP', ()=> {
                     expect(nack).to.have.been.called.exactly(2);
                     done()
                 },
-                done
+                (err)=> {
+                    console.error(err)
+                }
+            )
+            .subscribe()
+    })
+
+    it('should retry on processBuffer failure', (done)=> {
+
+        const range = _.range(0, 5).map((i)=> `${i}`)
+
+        const mapSource = (event) => {
+            return Promise.delay(1).then(()=> {
+                return _.merge({}, event, {data: 'a' + event.data})
+            })
+        }
+
+        const ack = chai.spy(()=> {
+        })
+        const nack = chai.spy(()=> {
+        })
+
+        const rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
+
+        var i = 1
+        const subscription = reliableBufferedObservable(rabbitObservable, mapSource, (results)=> {
+            expect(results).to.have.length(5)
+            if (i++ < 4) {
+                return Promise.reject(`force reject ${i}`)
+            } else {
+                return Promise.resolve()
+            }
+        })
+
+        subscription
+            .do((reflectedResults) => {
+                    expect(ack).to.have.been.called.exactly(5);
+                    expect(nack).to.have.been.called.exactly(0);
+                    done()
+                },
+                (err) => {
+                    done(new Error(err))
+                }
             )
             .subscribe()
     })
@@ -188,7 +230,10 @@ function reliableBufferedObservable(rabbitObservable, mapSource, processBuffer) 
                             return reflectedResults
                         })
                 })
-        });
+        })
+        .retry()
+
+
 }
 
 function rabbitToObservable(consume) {
