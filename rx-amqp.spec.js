@@ -2,13 +2,13 @@ const chai = require('chai')
 const expect = chai.expect
 
 const Promise = require('bluebird')
-const jackrabbit = require('jackrabbit')
+const amqp = require('amqp-connection-manager')
 const _ = require('lodash')
 const Rx = require('rx')
 const url = require('url')
-const amqp = require('jackrabbit/node_modules/amqplib');
 const spies = require('chai-spies')
 const RxAmqp = require('./rx-amqp')
+const index = require('./index')
 
 Promise.longStackTraces()
 chai.config.includeStack = true
@@ -18,61 +18,57 @@ const dockerHostName = url.parse(process.env.DOCKER_HOST).hostname
 
 describe('Rxjs AMQP', ()=> {
 
-    beforeEach((done)=> {
-        rabbit = jackrabbit(`amqp://${dockerHostName}:5672`)
-        rabbit.on('connected', ()=> {
-            const connection = rabbit.getInternals().connection;
-            connection.createChannel(function (err, ch) {
-                ch.purgeQueue('hello', (err, ok)=> {
-                    if (ok) {
-                        ch.close(()=> {
-                            exchange = rabbit.default()
-                            exchange.on('ready', done)
-                        })
-                    }
-                })
-            });
-        })
+    var connection
 
+    beforeEach((done)=> {
+        connection = amqp.connect([`amqp://${dockerHostName}:5672`]);
+        connection.on('connect', ()=> {
+            var channelWrapper = connection.createChannel({
+                setup: function (channel) {
+                    return channel.assertQueue('hello');
+                }
+            });
+            channelWrapper.waitForConnect().then(done)
+        })
+        connection.on('disconnect', (params) => {
+            console.error(params)
+        });
     });
 
     afterEach(()=> {
-        rabbit.close()
+        return connection.close()
     })
 
-    it('converts a jackrabbit queue into an observable', (done)=> {
+    it('feeds amqp messages with associated channel information and an ack/nack shorthands into an observer', (done)=> {
 
-        const queue = exchange.queue({name: 'hello'})
-        const consume = _.partialRight(queue.consume, {noAck: true})
-
-        RxAmqp.fromJackrabbit(rabbit, consume)
+        Rx.Observable.create((observer) => {
+                connection.createChannel({
+                        setup: function (channel) {
+                            return channel.consume('hello', RxAmqp.onConsume(channel, observer))
+                        }
+                    })
+                    .on('error', done)
+            })
             .subscribe(
                 (event)=> {
-                    if (event.data === `4`) {
+                    const content = event.content.toString()
+                    event.ack()
+                    if (content === `4`) {
+                        expect(event.ack).to.not.be.null
+                        expect(event.nack).to.not.be.null
+                        expect(event.channel).to.not.be.null
+                        expect(event.content).to.not.be.null
+                        expect(event.msg).to.not.be.null
                         done()
                     }
                 }
-            );
+            )
 
-        _.range(5).map((i)=> `${i}`).forEach((i) => exchange.publish(i, {key: 'hello'}))
-    })
+        const sendChannel = connection.createChannel();
+        _.range(5).map((i)=> `${i}`).forEach((i) => {
+            return sendChannel.sendToQueue('hello', new Buffer(i))
+        })
 
-    it('emits the rabbit connection error with the observer.onError', (done)=> {
-
-        const queue = exchange.queue({name: 'hello'})
-        const consume = _.partialRight(queue.consume, {noAck: true})
-
-        RxAmqp.fromJackrabbit(rabbit, consume)
-            .subscribe(
-                (event)=> {
-                    if (event.data === `3`) {
-                        rabbit.close()
-                    }
-                },
-                (err) => done()
-            );
-
-        _.range(5).map((i)=> `${i}`).forEach((i) => exchange.publish(i, {key: 'hello'}))
     })
 
     it('should execute the processBuffer function with the results and ack the source messages', (done)=> {
@@ -92,7 +88,7 @@ describe('Rxjs AMQP', ()=> {
 
         var rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
-        var subscription = reliableBufferedObservable(rabbitObservable, mapSource, (settled)=> {
+        var subscription = index.reliableBufferedObservable(rabbitObservable, mapSource, (settled)=> {
             expect(settled.resolved).to.have.length(5)
             const expected = _.map(range.slice(0, 5), (item)=> {
                 return 'a' + item
@@ -111,7 +107,6 @@ describe('Rxjs AMQP', ()=> {
             )
             .subscribe()
 
-        range.forEach((i) => exchange.publish(i, {key: 'hello'}))
     })
 
     it('should not pass down the rejected results to the processBuffer function and nack the source messages', (done)=> {
@@ -135,7 +130,7 @@ describe('Rxjs AMQP', ()=> {
 
         const rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
-        const subscription = reliableBufferedObservable(rabbitObservable, mapSource, (settled)=> {
+        const subscription = index.reliableBufferedObservable(rabbitObservable, mapSource, (settled)=> {
             expect(settled.resolved).to.have.length(3)
             return Promise.resolve(settled)
         })
@@ -171,7 +166,7 @@ describe('Rxjs AMQP', ()=> {
         const rabbitObservable = fakeRabbitObservableWithSpies(range, ack, nack);
 
         var i = 1
-        const subscription = reliableBufferedObservable(rabbitObservable, mapSource, (settled)=> {
+        const subscription = index.reliableBufferedObservable(rabbitObservable, mapSource, (settled)=> {
             expect(settled.resolved).to.have.length(5)
             if (i++ < 4) {
                 return Promise.reject(`force reject ${i}`)
@@ -193,26 +188,6 @@ describe('Rxjs AMQP', ()=> {
             .subscribe()
     })
 })
-
-
-function reliableBufferedObservable(rabbitToObservable, mapSource, processBuffer) {
-
-    return rabbitToObservable
-        .map((event) => {
-            return {
-                source: event,
-                result: mapSource(event)
-            }
-        })
-        .bufferWithTimeOrCount(5000, 5)
-        .flatMap(RxAmqp.settleResults)
-        .flatMap(processBuffer)
-        .retry()
-        .do(RxAmqp.ackNack)
-
-
-}
-
 
 function fakeRabbitObservableWithSpies(range, ack, nack) {
     return Rx.Observable.create((observer) => {
