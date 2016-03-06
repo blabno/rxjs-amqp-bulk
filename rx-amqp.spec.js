@@ -25,7 +25,7 @@ describe('Rxjs AMQP', ()=> {
         connection.on('connect', ()=> {
             var channelWrapper = connection.createChannel({
                 setup: function (channel) {
-                    return channel.assertQueue('hello');
+                    return channel.assertQueue('es.sync');
                 }
             });
             channelWrapper.waitForConnect().then(done)
@@ -44,7 +44,7 @@ describe('Rxjs AMQP', ()=> {
         Rx.Observable.create((observer) => {
                 connection.createChannel({
                         setup: function (channel) {
-                            return channel.consume('hello', RxAmqp.onConsume(channel, observer))
+                            return channel.consume('es.sync', RxAmqp.onConsume(channel, observer))
                         }
                     })
                     .on('error', done)
@@ -66,7 +66,7 @@ describe('Rxjs AMQP', ()=> {
 
         const sendChannel = connection.createChannel();
         _.range(5).map((i)=> `${i}`).forEach((i) => {
-            return sendChannel.sendToQueue('hello', new Buffer(i))
+            return sendChannel.sendToQueue('es.sync', new Buffer(i))
         })
 
     })
@@ -77,7 +77,7 @@ describe('Rxjs AMQP', ()=> {
 
         const mapSource = (event) => {
             return Promise.delay(1).then(()=> {
-                return _.merge({}, event, {data: 'a' + event.data})
+                return _.merge({}, event, {content: 'a' + event.content})
             })
         }
 
@@ -93,7 +93,7 @@ describe('Rxjs AMQP', ()=> {
             const expected = _.map(range.slice(0, 5), (item)=> {
                 return 'a' + item
             })
-            expect(expected).to.eql(_.map(settled.resolved, (resolvedItem)=> resolvedItem.result.value().data))
+            expect(expected).to.eql(_.map(settled.resolved, (resolvedItem)=> resolvedItem.result.value().content))
             return Promise.resolve(settled)
         })
 
@@ -115,8 +115,8 @@ describe('Rxjs AMQP', ()=> {
 
         const mapSource = (event) => {
             return Promise.delay(1).then(()=> {
-                if (_.toNumber(event.data) < 3) {
-                    return _.merge({}, event, {data: 'a' + event.data})
+                if (_.toNumber(event.content) < 3) {
+                    return _.merge({}, event, {content: 'a' + event.content})
                 } else {
                     throw new Error('foobar')
                 }
@@ -154,7 +154,7 @@ describe('Rxjs AMQP', ()=> {
 
         const mapSource = (event) => {
             return Promise.delay(1).then(()=> {
-                return _.merge({}, event, {data: 'a' + event.data})
+                return _.merge({}, event, {content: 'a' + event.content})
             })
         }
 
@@ -193,7 +193,7 @@ function fakeRabbitObservableWithSpies(range, ack, nack) {
     return Rx.Observable.create((observer) => {
         range.forEach((i) => {
             observer.onNext({
-                data: i,
+                content: i,
                 ack,
                 nack,
                 msg: {}

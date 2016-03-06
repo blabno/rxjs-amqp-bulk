@@ -5,3 +5,19 @@ rabbit:
     - "5672:5672"
     - "15672:15672"
   restart: always
+
+mongo1:
+  hostname: mongo1
+  image: mongo:3
+  entrypoint: [ "mongod", "--replSet", "rs", "--journal", "--smallfiles", "--rest" ]
+  ports:
+    - "27017:27017"
+    - "28017:28017"
+  restart: always
+
+elasticsearch:
+  image: elasticsearch:latest
+  command: elasticsearch -Des.network.host=0.0.0.0
+  ports:
+    - "9200:9200"
+    - "9300:9300"
