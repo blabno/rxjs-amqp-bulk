@@ -15,6 +15,22 @@ mongo1:
     - "28017:28017"
   restart: always
 
+mongosetup:
+  image: mongo:3
+  links:
+    - mongo1:mongo1
+  volumes:
+    - ./scripts:/scripts
+  entrypoint: [ "/scripts/setup.sh" ]
+
+verify:
+  image: mongo:3
+  links:
+    - mongo1:mongo1
+  volumes:
+    - ./scripts:/scripts
+  entrypoint: [ "/scripts/query.sh" ]
+
 elasticsearch:
   image: elasticsearch:latest
   command: elasticsearch -Des.network.host=0.0.0.0
