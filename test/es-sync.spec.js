@@ -26,21 +26,24 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
     const equipmentId = uuid.v4();
 
-    const trackingData = _.range(0, 5).map((i)=> {
-        return {
-            id: uuid.v4(),
-            type: 'trackingData',
-            attributes: {
-                heading: 10,
-                canVariableValue: i
-            },
-            relationships: {
-                equipment: {
-                    data: {type: 'equipment', id: equipmentId}
+    function trackingData(rangeMax) {
+        var rangeMax = rangeMax || 5
+        return _.range(0, rangeMax).map((i)=> {
+            return {
+                id: uuid.v4(),
+                type: 'trackingData',
+                attributes: {
+                    heading: 10,
+                    canVariableValue: i
+                },
+                relationships: {
+                    equipment: {
+                        data: {type: 'equipment', id: equipmentId}
+                    }
                 }
             }
-        }
-    })
+        })
+    }
 
     describe('Pipeline rxjs', ()=> {
 
@@ -51,7 +54,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const nack = chai.spy(()=> {
             })
 
-            const queueObserver = () => fakeQueueObservableWithSpies(trackingData, ack, nack);
+            const queueObserver = () => fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
             EsSync.esBulkSyncPipeline(queueObserver,
                 (source)=> Promise.resolve(),
@@ -75,7 +78,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const nack = chai.spy(()=> {
             })
 
-            const queueObserver = ()=> fakeQueueObservableWithSpies(trackingData, ack, nack);
+            const queueObserver = ()=> fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
             const subscription = EsSync.esBulkSyncPipeline(queueObserver,
                 (event) => {
@@ -109,7 +112,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const nack = chai.spy(()=> {
             })
 
-            const queueObserver = () => fakeQueueObservableWithSpies(trackingData, ack, nack);
+            const queueObserver = () => fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
             var i = 0
             const subscription = EsSync.esBulkSyncPipeline(queueObserver, ()=> Promise.resolve(), (settled)=> {
@@ -189,7 +192,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 )
 
             const sendChannel = connection.createChannel({json: true});
-            trackingData.forEach((trackingDataMessage) => {
+            trackingData().forEach((trackingDataMessage) => {
                 return sendChannel.publish('change.events', 'trackingData.insert', trackingDataMessage)
             })
 
@@ -198,13 +201,15 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
     describe('End to End', ()=> {
 
-        before(() => {
+        beforeEach(() => {
             return Api.start()
                 .then((server)=> {
                     global.server = server
                     global.adapter = server.plugins['hapi-harvester'].adapter;
-                    const equipmentModel = global.adapter.models['equipment']
-                    return equipmentModel.remove({}).lean().exec()
+                    const models = global.adapter.models;
+                    return Promise.all(_.map(['equipment', 'trackingData'], (model)=> {
+                        return models[model].remove({}).lean().exec()
+                    }))
                 })
                 .then(()=> {
                     return global.adapter.create('equipment', {
@@ -215,15 +220,19 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         }
                     })
                 })
-                .then((res)=> {
+                .then(()=> {
                     return EsMappings.deleteIndex()
                 })
-                .then((res)=> {
+                .then(()=> {
                     return EsMappings.putIndex()
                 })
-                .then((res)=> {
+                .then(()=> {
                     return EsMappings.putMapping()
                 })
+        })
+
+        afterEach(()=> {
+            global.server.stop()
         })
 
         it.only('should buffer changes, parallel enrich and push to ES', (done)=> {
@@ -255,22 +264,22 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             })
 
                     },
-                    (err) => {
-                        done(err)
-                    }
+                    done
                 )
-            Promise.all(trackingData.map((trackingDataMessage) => {
-                    return $http({
-                        uri: `http://localhost:3000/trackingData`,
-                        method: 'post',
-                        json: {data: trackingDataMessage}
-                    })
-                }))
-                .catch((e)=> {
-                    console.error(e)
-                })
+
+            postTrackingData().catch(done)
 
         })
+
+        function postTrackingData(maxRange) {
+            return Promise.all(trackingData(maxRange).map((trackingDataMessage) => {
+                return $http({
+                    uri: `http://localhost:3000/trackingData`,
+                    method: 'post',
+                    json: {data: trackingDataMessage}
+                })
+            }))
+        }
 
     })
 
