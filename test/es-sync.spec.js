@@ -8,17 +8,23 @@ const Rx = require('rx')
 const url = require('url')
 const spies = require('chai-spies')
 const EsSync = require('../lib/es-sync')
+const EsMappings = require('../lib/es-mappings')
 const Api = require('../lib/api')
 const uuid = require('node-uuid');
 const amqpConnectionFactory = require('../lib/amqp-connection');
+const $http = require('http-as-promised')
 
 Promise.longStackTraces()
 chai.config.includeStack = true
 chai.use(spies);
 
+const dockerHostName = url.parse(process.env.DOCKER_HOST).hostname
+
 describe('AMQP Elasticsearch bulk sync', ()=> {
 
     var connection
+
+    const equipmentId = uuid.v4();
 
     const trackingData = _.range(0, 5).map((i)=> {
         return {
@@ -35,8 +41,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             }
         }
     })
-
-    const equipmentId = uuid.v4();
 
     describe('Pipeline rxjs', ()=> {
 
@@ -211,6 +215,61 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         }
                     })
                 })
+                .then((res)=> {
+                    return EsMappings.deleteIndex()
+                })
+                .then((res)=> {
+                    return EsMappings.putIndex()
+                })
+                .then((res)=> {
+                    return EsMappings.putMapping()
+                })
+        })
+
+        it.only('should buffer changes, parallel enrich and push to ES', (done)=> {
+
+            const pipeline = EsSync.start();
+
+            pipeline
+                .subscribe(
+                    ()=> {
+                        // todo this delay now waits for data to become available for search in ES
+                        // replace this with a more deterministic mechanism
+                        Promise.delay(1000)
+                            .then(()=> {
+                                return $http({
+                                    uri: `http://${dockerHostName}:9200/telemetry/trackingData/_search`,
+                                    method: 'get',
+                                    json: true
+                                })
+                            })
+                            .spread((res, body)=> {
+                                expect(body.hits.hits.length).to.equal(5)
+                                const canVariableValues = _(body.hits.hits).map('_source.attributes.canVariableValue')
+                                expect(canVariableValues.includes(0)).to.be.true
+                                expect(canVariableValues.includes(1)).to.be.true
+                                expect(canVariableValues.includes(2)).to.be.true
+                                expect(canVariableValues.includes(3)).to.be.true
+                                expect(canVariableValues.includes(4)).to.be.true
+                                done()
+                            })
+
+                    },
+                    (err) => {
+                        done(err)
+                    }
+                )
+            Promise.all(trackingData.map((trackingDataMessage) => {
+                    return $http({
+                        uri: `http://localhost:3000/trackingData`,
+                        method: 'post',
+                        json: {data: trackingDataMessage}
+                    })
+                }))
+                .catch((e)=> {
+                    console.error(e)
+                })
+
         })
 
     })
