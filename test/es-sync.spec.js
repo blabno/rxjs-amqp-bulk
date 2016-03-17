@@ -206,29 +206,29 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 .then((server)=> {
                     global.server = server
                     global.adapter = server.plugins['hapi-harvester'].adapter;
-                    const models = global.adapter.models;
-                    return Promise.all(_.map(['equipment', 'trackingData'], (model)=> {
-                        return models[model].remove({}).lean().exec()
-                    }))
                 })
-                .then(()=> {
-                    return global.adapter.create('equipment', {
-                        id: equipmentId,
-                        type: 'equipment',
-                        attributes: {
-                            identificationNumber: '5NPE24AF8FH002410'
-                        }
-                    })
+                .then(()=> clearData)
+                .then(()=> createEquipment())
+                .then(()=> EsMappings.deleteIndex())
+                .then(()=> EsMappings.putIndex())
+                .then(()=> EsMappings.putMapping())
+
+            function clearData() {
+                const models = global.adapter.models;
+                return Promise.all(_.map(['equipment', 'trackingData'], (model)=> {
+                    return models[model].remove({}).lean().exec()
+                }))
+            }
+
+            function createEquipment() {
+                return global.adapter.create('equipment', {
+                    id: equipmentId,
+                    type: 'equipment',
+                    attributes: {
+                        identificationNumber: '5NPE24AF8FH002410'
+                    }
                 })
-                .then(()=> {
-                    return EsMappings.deleteIndex()
-                })
-                .then(()=> {
-                    return EsMappings.putIndex()
-                })
-                .then(()=> {
-                    return EsMappings.putMapping()
-                })
+            }
         })
 
         afterEach(()=> {
