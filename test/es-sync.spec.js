@@ -56,7 +56,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             const queueObserver = () => fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
-            EsSync.esBulkSyncPipeline(queueObserver,
+            EsSync.esBulkSyncPipeline(queueObserver, 5,
                 (source)=> Promise.resolve(),
                 (settled)=> Promise.resolve(settled))
                 .do((settled) => {
@@ -80,7 +80,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             const queueObserver = ()=> fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
-            const subscription = EsSync.esBulkSyncPipeline(queueObserver,
+            const subscription = EsSync.esBulkSyncPipeline(queueObserver, 5,
                 (event) => {
                     const trackingDataItem = JSON.parse(event.content.toString())
                     return Promise.resolve().then(()=> {
@@ -115,7 +115,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const queueObserver = () => fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
             var i = 0
-            const subscription = EsSync.esBulkSyncPipeline(queueObserver, ()=> Promise.resolve(), (settled)=> {
+            const subscription = EsSync.esBulkSyncPipeline(queueObserver, 5,()=> Promise.resolve(), (settled)=> {
                 if (i++ < 4) {
                     return Promise.reject(`force reject ${i}`)
                 } else {
@@ -235,50 +235,84 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             global.server.stop()
         })
 
-        it.only('should buffer changes, parallel enrich and push to ES', (done)=> {
+        it('should buffer changes, parallel enrich and push to ES', (done)=> {
 
-            const pipeline = EsSync.start();
+            postTrackingData(5).subscribe(
+                (trackingData)=> {
 
-            pipeline
+                    const bufferThreshold = 5
+                    const pipeline = EsSync.start(bufferThreshold);
+
+                    pipeline
+                        .subscribe(
+                            ()=> {
+                                Promise.all(_.map(trackingData, (trackingDataItem)=> {
+                                        return $http({
+                                            uri: `http://${dockerHostName}:9200/telemetry/trackingData/${trackingDataItem.data.id}`,
+                                            method: 'get',
+                                            json: true
+                                        }).spread((res, body)=>body)
+                                    }))
+                                    .then((trackingDataFromEs)=> {
+                                        expect(trackingDataFromEs.length).to.equal(5)
+                                        done()
+                                    })
+
+                            },
+                            done
+                        )
+                },
+                done
+            )
+
+        })
+
+        it.only('should be able to cope with 1000s of trackingData messages', (done)=> {
+
+            const docs = 200
+            const bufferThreshold = 20
+
+            postTrackingData(docs, bufferThreshold)
+                .bufferWithCount(docs / 5)
                 .subscribe(
-                    ()=> {
-                        // todo this delay now waits for data to become available for search in ES
-                        // replace this with a more deterministic mechanism
-                        Promise.delay(1000)
-                            .then(()=> {
-                                return $http({
-                                    uri: `http://${dockerHostName}:9200/telemetry/trackingData/_search`,
-                                    method: 'get',
-                                    json: true
-                                })
-                            })
-                            .spread((res, body)=> {
-                                expect(body.hits.hits.length).to.equal(5)
-                                const canVariableValues = _(body.hits.hits).map('_source.attributes.canVariableValue')
-                                expect(canVariableValues.includes(0)).to.be.true
-                                expect(canVariableValues.includes(1)).to.be.true
-                                expect(canVariableValues.includes(2)).to.be.true
-                                expect(canVariableValues.includes(3)).to.be.true
-                                expect(canVariableValues.includes(4)).to.be.true
-                                done()
-                            })
+                    (trackingData)=> {
 
-                    },
-                    done
-                )
+                        const begin = new Date()
+                        EsSync.start(bufferThreshold)
+                            .bufferWithCount(docs / bufferThreshold)
+                            .subscribe(
+                                (events)=> {
+                                    const end = new Date()
+                                    console.log(`time took : ${end - begin}`)
+                                    done()
+                                },
+                                done
+                            )
 
-            postTrackingData().catch(done)
+                    })
 
         })
 
         function postTrackingData(maxRange) {
-            return Promise.all(trackingData(maxRange).map((trackingDataMessage) => {
+
+            var i = 0
+            return Rx.Observable.fromArray(trackingData(maxRange))
+                .bufferWithCount(5)
+                .map((trackingData)=> {
+                    return Rx.Observable.defer(()=>Promise.all(_.map(trackingData, post)))
+                })
+                .concatAll()
+
+
+            function post(trackingDataItem) {
                 return $http({
                     uri: `http://localhost:3000/trackingData`,
                     method: 'post',
-                    json: {data: trackingDataMessage}
+                    json: {data: trackingDataItem}
+                }).spread((res, body) => {
+                    return body
                 })
-            }))
+            }
         }
 
     })
