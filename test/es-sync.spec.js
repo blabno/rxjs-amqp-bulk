@@ -115,7 +115,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const queueObserver = () => fakeQueueObservableWithSpies(trackingData(), ack, nack);
 
             var i = 0
-            const subscription = EsSync.esBulkSyncPipeline(queueObserver, 5,()=> Promise.resolve(), (settled)=> {
+            const subscription = EsSync.esBulkSyncPipeline(queueObserver, 5, ()=> Promise.resolve(), (settled)=> {
                 if (i++ < 4) {
                     return Promise.reject(`force reject ${i}`)
                 } else {
@@ -237,13 +237,12 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should buffer changes, parallel enrich and push to ES', (done)=> {
 
-            postTrackingData(5).subscribe(
+            postTrackingData(5).then(
                 (trackingData)=> {
 
                     const bufferThreshold = 5
-                    const pipeline = EsSync.start(bufferThreshold);
 
-                    pipeline
+                    EsSync.start(bufferThreshold)
                         .subscribe(
                             ()=> {
                                 Promise.all(_.map(trackingData, (trackingDataItem)=> {
@@ -267,51 +266,40 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it.only('should be able to cope with 1000s of trackingData messages', (done)=> {
+        it('should be able to cope with 100s of trackingData messages', (done)=> {
 
             const docs = 200
             const bufferThreshold = 20
 
-            postTrackingData(docs, bufferThreshold)
-                .bufferWithCount(docs / 5)
-                .subscribe(
-                    (trackingData)=> {
+            postTrackingData(docs)
+                .then(()=> {
 
-                        const begin = new Date()
-                        EsSync.start(bufferThreshold)
-                            .bufferWithCount(docs / bufferThreshold)
-                            .subscribe(
-                                (events)=> {
-                                    const end = new Date()
-                                    console.log(`time took : ${end - begin}`)
-                                    done()
-                                },
-                                done
-                            )
-
-                    })
+                    const begin = new Date()
+                    EsSync.start(bufferThreshold)
+                        .bufferWithCount(docs / bufferThreshold)
+                        .subscribe(
+                            (events)=> {
+                                const end = new Date()
+                                console.log(`time took : ${end - begin}`)
+                                done()
+                            },
+                            done
+                        )
+                })
 
         })
 
         function postTrackingData(maxRange) {
 
-            var i = 0
-            return Rx.Observable.fromArray(trackingData(maxRange))
-                .bufferWithCount(5)
-                .map((trackingData)=> {
-                    return Rx.Observable.defer(()=>Promise.all(_.map(trackingData, post)))
-                })
-                .concatAll()
-
+            return Promise
+                .map(trackingData(maxRange), post, {concurrency: 5})
 
             function post(trackingDataItem) {
                 return $http({
                     uri: `http://localhost:3000/trackingData`,
                     method: 'post',
                     json: {data: trackingDataItem}
-                }).spread((res, body) => {
-                    return body
-                })
+                }).spread((res, body) => body)
             }
         }
 
