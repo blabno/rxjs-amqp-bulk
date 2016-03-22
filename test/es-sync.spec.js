@@ -6,24 +6,24 @@ const _ = require('lodash')
 const Rx = require('rx')
 const url = require('url')
 const spies = require('chai-spies')
-const uuid = require('node-uuid');
+const uuid = require('node-uuid')
 const $http = require('http-as-promised')
 
 const EsSync = require('../lib/es-sync')
 const EsSetup = require('../lib/es-setup')
 const Api = require('../lib/api')
-const amqpConnectionFactory = require('../lib/amqp-connection');
+const amqpConnectionFactory = require('../lib/amqp-connection')
 const config = require('./config')
 
 Promise.longStackTraces()
 chai.config.includeStack = true
-chai.use(spies);
+chai.use(spies)
 
 describe('AMQP Elasticsearch bulk sync', ()=> {
 
     var connection
 
-    const equipmentId = uuid.v4();
+    const equipmentId = uuid.v4()
 
     function trackingData(rangeMax) {
         var rangeMax = rangeMax || 5
@@ -53,15 +53,15 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const nack = chai.spy(()=> {
             })
 
-            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack);
+            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
 
             EsSync.esBulkSyncPipeline(config, queueObserver,
                 (source)=> Promise.resolve(),
                 (settled)=> Promise.resolve(settled))
                 .do((settled) => {
                         expect(settled.resolved).to.have.length(config.bufferCount)
-                        expect(nack).to.have.been.called.exactly(0);
-                        expect(ack).to.have.been.called.exactly(config.bufferCount);
+                        expect(nack).to.have.been.called.exactly(0)
+                        expect(ack).to.have.been.called.exactly(config.bufferCount)
                         done()
                     },
                     done
@@ -77,9 +77,9 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const nack = chai.spy(()=> {
             })
 
-            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack);
+            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
 
-            const failures = 3;
+            const failures = 3
             const subscription = EsSync.esBulkSyncPipeline(config, queueObserver,
                 (event) => {
                     const trackingDataItem = JSON.parse(event.content.toString())
@@ -96,8 +96,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             subscription
                 .do((settled) => {
                         expect(settled.resolved).to.have.length(config.bufferCount - failures)
-                        expect(ack).to.have.been.called.exactly(config.bufferCount - failures);
-                        expect(nack).to.have.been.called.exactly(failures);
+                        expect(ack).to.have.been.called.exactly(config.bufferCount - failures)
+                        expect(nack).to.have.been.called.exactly(failures)
                         done()
                     },
                     done
@@ -112,7 +112,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const nack = chai.spy(()=> {
             })
 
-            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack);
+            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
 
             var i = 0
             const subscription = EsSync.esBulkSyncPipeline(config, queueObserver, ()=> Promise.resolve(), (settled)=> {
@@ -142,7 +142,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         msg: {}
                     })
                 })
-            });
+            })
         }
     })
 
@@ -157,13 +157,13 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     channel.purgeQueue('es.sync'),
                     channel.bindQueue('es.sync', 'change.events', 'trackingData.insert')])
             }
-        });
+        })
         channelWrapper.waitForConnect()
             .then(()=> {
                 done()
             })
 
-    });
+    })
 
     afterEach(()=> {
         return global.amqpConnection.close()
@@ -189,7 +189,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     }
                 )
 
-            const sendChannel = global.amqpConnection.createChannel({json: true});
+            const sendChannel = global.amqpConnection.createChannel({json: true})
             trackingData().forEach((trackingDataMessage) => {
                 return sendChannel.publish('change.events', 'trackingData.insert', trackingDataMessage)
             })
@@ -200,37 +200,36 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     describe('End to End', ()=> {
 
         beforeEach(() => {
-            return start()
-                .then((server)=> {
-                    global.server = server
-                    global.adapter = server.plugins['hapi-harvester'].adapter
-
-                })
+            return Promise.resolve()
+                .then(apiStart)
                 .then(clearData)
                 .then(createEquipment)
                 .then(deleteIndex)
                 .then(putIndex)
                 .then(putMapping)
 
-            function start() {
-                return Api.start(global.amqpConnection, config);
+            function apiStart() {
+                return Api.start(global.amqpConnection, config)
+                    .then((server)=> {
+                        global.server = server
+                        global.adapter = server.plugins['hapi-harvester'].adapter
+                    })
             }
 
             function deleteIndex() {
-                return EsSetup.deleteIndex(config);
+                return EsSetup.deleteIndex(config)
             }
 
             function putIndex() {
-                return EsSetup.putIndex(config);
+                return EsSetup.putIndex(config)
             }
 
             function putMapping() {
-                return EsSetup.putMapping(config);
+                return EsSetup.putMapping(config)
             }
 
             function clearData() {
-
-                const models = global.adapter.models;
+                const models = global.adapter.models
                 return Promise.all(_.map(['equipment', 'trackingData'], (model)=> {
                     return models[model].remove({}).exec()
                 }))
