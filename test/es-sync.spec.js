@@ -10,7 +10,7 @@ const uuid = require('node-uuid');
 const $http = require('http-as-promised')
 
 const EsSync = require('../lib/es-sync')
-const EsMappings = require('../lib/es-mappings')
+const EsSetup = require('../lib/es-setup')
 const Api = require('../lib/api')
 const amqpConnectionFactory = require('../lib/amqp-connection');
 const config = require('./config')
@@ -200,7 +200,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     describe('End to End', ()=> {
 
         beforeEach(() => {
-            return Api.start(global.amqpConnection, config)
+            return start()
                 .then((server)=> {
                     global.server = server
                     global.adapter = server.plugins['hapi-harvester'].adapter
@@ -208,9 +208,25 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 })
                 .then(clearData)
                 .then(createEquipment)
-                .then(()=> EsMappings.deleteIndex(config))
-                .then(()=> EsMappings.putIndex(config))
-                .then(()=> EsMappings.putMapping(config))
+                .then(deleteIndex)
+                .then(putIndex)
+                .then(putMapping)
+
+            function start() {
+                return Api.start(global.amqpConnection, config);
+            }
+
+            function deleteIndex() {
+                return EsSetup.deleteIndex(config);
+            }
+
+            function putIndex() {
+                return EsSetup.putIndex(config);
+            }
+
+            function putMapping() {
+                return EsSetup.putMapping(config);
+            }
 
             function clearData() {
 
@@ -230,6 +246,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 })
             }
         })
+
 
         afterEach(()=> {
             return global.server.stop()
