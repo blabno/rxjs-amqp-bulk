@@ -21,8 +21,6 @@ chai.use(spies)
 
 describe('AMQP Elasticsearch bulk sync', ()=> {
 
-    var connection
-
     const equipmentId = uuid.v4()
 
     function trackingData(rangeMax) {
@@ -57,9 +55,9 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             EsSync.esBulkSyncPipeline(config, queueObserver,
                 (source)=> Promise.resolve(),
-                (settled)=> Promise.resolve(settled))
-                .do((settled) => {
-                        expect(settled.resolved).to.have.length(config.bufferCount)
+                (eventsWithSourceAndResult)=> Promise.resolve(eventsWithSourceAndResult))
+                .do((eventsWithSourceAndResult) => {
+                        expect(eventsWithSourceAndResult).to.have.length(config.bufferCount)
                         expect(nack).to.have.been.called.exactly(0)
                         expect(ack).to.have.been.called.exactly(config.bufferCount)
                         done()
@@ -70,42 +68,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it('should not pass down the rejected results to the syncBufferedToEs function and nack the source messages', (done)=> {
-
-            const ack = chai.spy(()=> {
-            })
-            const nack = chai.spy(()=> {
-            })
-
-            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
-
-            const failures = 3
-            const subscription = EsSync.esBulkSyncPipeline(config, queueObserver,
-                (event) => {
-                    const trackingDataItem = JSON.parse(event.content.toString())
-                    return Promise.resolve().then(()=> {
-                        if (trackingDataItem.attributes.canVariableValue < failures) {
-                            throw new Error()
-                        } else {
-                            return trackingDataItem
-                        }
-                    })
-                },
-                (settled)=> Promise.resolve(settled))
-
-            subscription
-                .do((settled) => {
-                        expect(settled.resolved).to.have.length(config.bufferCount - failures)
-                        expect(ack).to.have.been.called.exactly(config.bufferCount - failures)
-                        expect(nack).to.have.been.called.exactly(failures)
-                        done()
-                    },
-                    done
-                )
-                .subscribe()
-        })
-
-        it('should retry on syncBufferedToEs failure', (done)=> {
+        it('should retry the pipeline on failure', (done)=> {
 
             const ack = chai.spy(()=> {
             })
@@ -115,17 +78,20 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
 
             var i = 0
-            const subscription = EsSync.esBulkSyncPipeline(config, queueObserver, ()=> Promise.resolve(), (settled)=> {
+            const pipeline = EsSync.esBulkSyncPipeline(config, queueObserver, ()=> Promise.resolve(), (eventsWithSourceAndResult)=> {
                 if (i++ < 4) {
-                    return Promise.reject(`force reject ${i}`)
+                    return Promise.reject(new Error(`force reject ${i}`))
                 } else {
-                    return Promise.resolve(settled)
+                    return Promise.resolve(eventsWithSourceAndResult)
                 }
             })
 
-            subscription
-                .do(
-                    () => done(),
+            pipeline
+                .do((eventsWithSourceAndResult) => {
+                        expect(eventsWithSourceAndResult).to.have.length(config.bufferCount)
+                        expect(ack).to.have.been.called.exactly(config.bufferCount)
+                        done()
+                    },
                     done
                 )
                 .subscribe()

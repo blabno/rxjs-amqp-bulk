@@ -13,6 +13,7 @@ module.exports = {
     amqpUrl : [`amqp://${dockerHostName}:5672`],
     esHostUrl: `http://${dockerHostName}:9200`,
     bufferTimeout: 3000000,
-    bufferCount: 20
+    bufferCount: 20,
+    pipelineFailRetry: 10
 
 }
