@@ -121,7 +121,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('feeds amqp messages with associated channel information and an ack/nack shorthands into an observer', (done)=> {
 
-            const subscription = EsSync.queueToObserver(global.amqpConnection)
+            const subscription = EsSync.esQueueToObserver(global.amqpConnection)
                 .subscribe(
                     (event)=> {
                         event.ack()
