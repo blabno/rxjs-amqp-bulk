@@ -227,20 +227,21 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it('should be able to cope with 100s of trackingData messages', (done)=> {
+        it('should be able to cope with 1000 trackingData messages under 6 secs', (done)=> {
 
-            const docs = config.bufferCount * 10
+            const docs = config.bufferCount * 50
 
             postTrackingData(docs)
                 .then(()=> {
-
                     const begin = new Date()
                     EsSync.start(global.amqpConnection, config)
                         .bufferWithCount(docs / config.bufferCount)
                         .subscribe(
                             (events)=> {
                                 const end = new Date()
-                                console.log(`time took : ${end - begin}`)
+                                const duration = end - begin;
+                                console.log(`time took : ${duration}`)
+                                expect(duration).to.be.below(6000)
                                 done()
                             },
                             done
