@@ -19,28 +19,9 @@ Promise.longStackTraces()
 chai.config.includeStack = true
 chai.use(spies)
 
+const equipmentId = uuid.v4()
+
 describe('AMQP Elasticsearch bulk sync', ()=> {
-
-    const equipmentId = uuid.v4()
-
-    function trackingData(rangeMax) {
-        var rangeMax = rangeMax || 5
-        return _.range(0, rangeMax).map((i)=> {
-            return {
-                id: uuid.v4(),
-                type: 'trackingData',
-                attributes: {
-                    heading: 10,
-                    canVariableValue: i
-                },
-                relationships: {
-                    equipment: {
-                        data: {type: 'equipment', id: equipmentId}
-                    }
-                }
-            }
-        })
-    }
 
     describe('Pipeline rxjs', ()=> {
 
@@ -156,7 +137,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 )
 
             const sendChannel = global.amqpConnection.createChannel({json: true})
-            trackingData().forEach((trackingDataMessage) => {
+            trackingData(config.bufferCount).forEach((trackingDataMessage) => {
                 return sendChannel.publish('change.events', 'trackingData.insert', trackingDataMessage)
             })
 
@@ -285,5 +266,23 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     })
 
 })
+
+function trackingData(rangeMax) {
+    return _.range(0, rangeMax).map((i)=> {
+        return {
+            id: uuid.v4(),
+            type: 'trackingData',
+            attributes: {
+                heading: 10,
+                canVariableValue: i
+            },
+            relationships: {
+                equipment: {
+                    data: {type: 'equipment', id: equipmentId}
+                }
+            }
+        }
+    })
+}
 
 
