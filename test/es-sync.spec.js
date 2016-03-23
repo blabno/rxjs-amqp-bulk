@@ -67,15 +67,16 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 }
             })
 
-            pipeline
+            const subscription = pipeline
                 .do((eventsWithSourceAndResult) => {
                         expect(eventsWithSourceAndResult).to.have.length(config.bufferCount)
                         expect(ack).to.have.been.called.exactly(config.bufferCount)
+                        subscription.dispose()
                         done()
                     },
                     done
                 )
-                .subscribe()
+                .subscribe();
         })
 
 
@@ -120,7 +121,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('feeds amqp messages with associated channel information and an ack/nack shorthands into an observer', (done)=> {
 
-            EsSync.queueToObserver(global.amqpConnection)
+            const subscription = EsSync.queueToObserver(global.amqpConnection)
                 .subscribe(
                     (event)=> {
                         event.ack()
@@ -131,10 +132,11 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             expect(event.channel).to.not.be.null
                             expect(event.content).to.not.be.null
                             expect(event.msg).to.not.be.null
+                            subscription.dispose()
                             done()
                         }
                     }
-                )
+                );
 
             const sendChannel = global.amqpConnection.createChannel({json: true})
             trackingData(config.bufferCount).forEach((trackingDataMessage) => {
@@ -203,7 +205,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(config.bufferCount).then(
                 (trackingData)=> {
 
-                    EsSync.start(amqpConnection, config)
+                    const subscription = EsSync.start(amqpConnection, config)
                         .subscribe(
                             ()=> {
                                 Promise.all(_.map(trackingData, (trackingDataItem)=> {
@@ -215,12 +217,13 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                     }))
                                     .then((trackingDataFromEs)=> {
                                         expect(trackingDataFromEs.length).to.equal(config.bufferCount)
+                                        subscription.dispose()
                                         done()
                                     })
 
                             },
                             done
-                        )
+                        );
                 },
                 done
             )
@@ -234,7 +237,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(docs)
                 .then(()=> {
                     const begin = new Date()
-                    EsSync.start(global.amqpConnection, config)
+                    const subscription = EsSync.start(global.amqpConnection, config)
                         .bufferWithCount(docs / config.bufferCount)
                         .subscribe(
                             (events)=> {
@@ -242,10 +245,11 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                 const duration = end - begin;
                                 console.log(`time took : ${duration}`)
                                 expect(duration).to.be.below(6000)
+                                subscription.dispose()
                                 done()
                             },
                             done
-                        )
+                        );
                 })
 
         })
