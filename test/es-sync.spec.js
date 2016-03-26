@@ -36,7 +36,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             EsSync.esBulkSyncPipeline(config, queueObserver,
                 (source)=> Promise.resolve(),
-                (eventsWithSourceAndResult)=> Promise.resolve(eventsWithSourceAndResult))
+                (eventsWithSourceAndResult)=> Promise.resolve(eventsWithSourceAndResult),
+                EsSync.ack)
                 .do((eventsWithSourceAndResult) => {
                         expect(eventsWithSourceAndResult).to.have.length(config.bufferCount)
                         expect(nack).to.have.been.called.exactly(0)
@@ -60,12 +61,13 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             var i = 0
             const pipeline = EsSync.esBulkSyncPipeline(config, queueObserver, ()=> Promise.resolve(), (eventsWithSourceAndResult)=> {
-                if (i++ < 4) {
-                    return Promise.reject(new Error(`force reject ${i}`))
-                } else {
-                    return Promise.resolve(eventsWithSourceAndResult)
-                }
-            })
+                    if (i++ < 4) {
+                        return Promise.reject(new Error(`force reject ${i}`))
+                    } else {
+                        return Promise.resolve(eventsWithSourceAndResult)
+                    }
+                },
+                EsSync.ack)
 
             const subscription = pipeline
                 .do((eventsWithSourceAndResult) => {
@@ -84,17 +86,20 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             return Rx.Observable.create((observer) => {
                 trackingData.forEach((trackingDataItem) => {
                     observer.onNext({
-                        content: new Buffer(JSON.stringify(trackingDataItem)),
-                        ack,
-                        nack,
-                        msg: {}
+                        channel: {
+                            ack,
+                            nack
+                        },
+                        msg: {
+                            content: new Buffer(JSON.stringify(trackingDataItem))
+                        }
                     })
                 })
             })
         }
     })
 
-    beforeEach((done)=> {
+    beforeEach(()=> {
 
         global.amqpConnection = amqpConnectionFactory.connect(config)
         const channelWrapper = amqpConnection.createChannel({
@@ -106,9 +111,9 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     channel.bindQueue('es.sync', 'change.events', 'trackingData.insert')])
             }
         })
-        channelWrapper.waitForConnect()
+        return channelWrapper.waitForConnect()
             .then(()=> {
-                done()
+                return channelWrapper.close()
             })
 
     })
@@ -124,13 +129,10 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const subscription = EsSync.esQueueConsumeObservable(global.amqpConnection, config)
                 .subscribe(
                     (event)=> {
-                        event.ack()
-                        const content = JSON.parse(event.content.toString())
+                        event.channel.ack(event.msg)
+                        const content = JSON.parse(event.msg.content.toString())
                         if (content.attributes.canVariableValue === 4) {
-                            expect(event.ack).to.not.be.null
-                            expect(event.nack).to.not.be.null
                             expect(event.channel).to.not.be.null
-                            expect(event.content).to.not.be.null
                             expect(event.msg).to.not.be.null
                             subscription.dispose()
                             done()
@@ -202,30 +204,46 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should buffer changes, parallel enrich and push to ES', (done)=> {
 
-            postTrackingData(config.bufferCount).then(
-                (trackingData)=> {
-
+            postTrackingData(config.bufferCount).then((trackingData)=> {
                     const subscription = EsSync.start(amqpConnection, config)
                         .subscribe(
-                            ()=> {
-                                Promise.all(_.map(trackingData, (trackingDataItem)=> {
-                                        return $http({
-                                            uri: `${config.esHostUrl}/telemetry/trackingData/${trackingDataItem.data.id}`,
-                                            method: 'get',
-                                            json: true
-                                        }).spread((res, body)=> body)
-                                    }))
-                                    .then((trackingDataFromEs)=> {
-                                        expect(trackingDataFromEs.length).to.equal(config.bufferCount)
-                                        subscription.dispose()
-                                        done()
-                                    })
-
-                            },
+                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
                             done
                         );
                 },
                 done
+            )
+
+        })
+
+        it('should gracefully recover when the AMQP connection fails before all messages are ack\'ed', (done)=> {
+
+            postTrackingData(config.bufferCount).then((trackingData)=> {
+                    var i = 0
+                    const failAck = (eventsWithSourceAndResult)=> {
+                        return Promise.resolve()
+                            .then(()=> {
+                                i++
+                                if (i < 3) {
+                                    const sourceAndResult = _.first(eventsWithSourceAndResult);
+                                    sourceAndResult.source.channel.connection.stream.destroy()
+                                }
+                            })
+                            .then(()=> EsSync.ack(eventsWithSourceAndResult))
+                    }
+
+                    const subscription = EsSync.esBulkSyncPipeline(
+                        config,
+                        EsSync.esQueueConsumeObservable(amqpConnection, config),
+                        EsSync.fetchTrackingDataComposite(config),
+                        EsSync.syncBufferedToEs(config),
+                        failAck)
+                        .skip(2) // ack on a broken channel/connection doesn't result in an error so skip the first observed value batches
+                        .subscribe(
+                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
+                            done
+                        );
+                }
             )
 
         })
@@ -253,6 +271,20 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 })
 
         })
+
+        function verifyResultsInEsAndDispose(trackingData, subscription) {
+            return Promise.all(_.map(trackingData, (trackingDataItem)=> {
+                    return $http({
+                        uri: `${config.esHostUrl}/telemetry/trackingData/${trackingDataItem.data.id}`,
+                        method: 'get',
+                        json: true
+                    }).spread((res, body)=> body)
+                }))
+                .then((trackingDataFromEs)=> {
+                    expect(trackingDataFromEs.length).to.equal(config.bufferCount)
+                    subscription.dispose()
+                })
+        }
 
         function postTrackingData(maxRange) {
 
