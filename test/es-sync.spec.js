@@ -50,37 +50,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it('should retry the pipeline on failure', (done)=> {
-
-            const ack = chai.spy(()=> {
-            })
-            const nack = chai.spy(()=> {
-            })
-
-            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
-
-            var i = 0
-            const pipeline = EsSync.esBulkSyncPipeline(config, queueObserver, ()=> Promise.resolve(), (eventsWithSourceAndResult)=> {
-                    if (i++ < 4) {
-                        return Promise.reject(new Error(`force reject ${i}`))
-                    } else {
-                        return Promise.resolve(eventsWithSourceAndResult)
-                    }
-                },
-                EsSync.ack)
-
-            const subscription = pipeline
-                .do((eventsWithSourceAndResult) => {
-                        expect(eventsWithSourceAndResult).to.have.length(config.bufferCount)
-                        expect(ack).to.have.been.called.exactly(config.bufferCount)
-                        subscription.dispose()
-                        done()
-                    },
-                    done
-                )
-                .subscribe();
-        })
-
 
         function fakeQueueObservableWithSpies(trackingData, ack, nack) {
             return Rx.Observable.create((observer) => {
@@ -212,6 +181,36 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         );
                 },
                 done
+            )
+
+        })
+
+        it('should retry the pipeline on failure', (done)=> {
+
+            postTrackingData(config.bufferCount).then((trackingData)=> {
+                    var i = 0
+                    const failSync = (eventsWithSourceAndResult)=> {
+                        return Promise.resolve()
+                            .then(()=> {
+                                i++
+                                if (i < 3) {
+                                    throw new Error(`force reject ${i}`)
+                                }
+                            })
+                            .then(()=> EsSync.syncBufferedToEs(config)(eventsWithSourceAndResult))
+                    }
+
+                    const subscription = EsSync.esBulkSyncPipeline(
+                        config,
+                        EsSync.esQueueConsumeObservable(amqpConnection, config),
+                        EsSync.fetchTrackingDataComposite(config),
+                        failSync,
+                        EsSync.ack)
+                        .subscribe(
+                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
+                            done
+                        );
+                }
             )
 
         })
