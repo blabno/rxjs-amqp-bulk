@@ -157,7 +157,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         it('should retry the pipeline on failure', (done)=> {
 
             var i = 0
-            monkeypatch(esSync, 'enrichBulkSyncAck', function (original, events) {
+            monkeypatch(esSync, 'enrichBufferAndSync', function (original, events) {
                 return Promise.resolve()
                     .then(()=> {
                         i++
@@ -183,7 +183,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         it('should gracefully recover when the AMQP connection fails before messages are ack\'ed', (done)=> {
 
             var i = 0
-            monkeypatch(esSync, 'enrichBulkSyncAck', function (original, events) {
+            monkeypatch(esSync, 'enrichBufferAndSync', function (original, events) {
                 return Promise.resolve()
                     .then(()=> {
                         i++
