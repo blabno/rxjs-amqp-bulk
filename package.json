@@ -13,7 +13,6 @@
     "amqplib": "^0.4.1",
     "bluebird": "^3.3.1",
     "chai": "^3.5.0",
-    "chai-spies": "^0.7.1",
     "hapi": "^13.0.0",
     "hapi-harvester": "^0.4.0",
     "joi": "^8.0.4",
@@ -21,7 +20,8 @@
     "mocha": "^2.4.5",
     "monkeypatch": "^1.0.0",
     "rx": "^4.0.8",
-    "rx-node": "^1.0.2"
+    "rx-node": "^1.0.2",
+    "sinon": "^1.17.3"
   },
   "dependencies": {
     "node-uuid": "^1.4.7"

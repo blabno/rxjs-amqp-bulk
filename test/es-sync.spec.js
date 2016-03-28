@@ -4,9 +4,10 @@ const expect = chai.expect
 const Promise = require('bluebird')
 const _ = require('lodash')
 const url = require('url')
-const spies = require('chai-spies')
 const uuid = require('node-uuid')
 const $http = require('http-as-promised')
+
+const sinon = require('sinon')
 
 const Api = require('../lib/api')
 const amqpConnectionFactory = require('../lib/amqp-connection')
@@ -16,7 +17,6 @@ const monkeypatch = require('monkeypatch');
 
 Promise.longStackTraces()
 chai.config.includeStack = true
-chai.use(spies)
 
 const equipmentId = uuid.v4()
 
@@ -129,6 +129,29 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 done
             )
 
+        })
+
+        it('should ack the messages', (done)=> {
+
+            postTrackingData(config.bufferCount).then((trackingData)=> {
+
+                const esQueueObservable = esSync.esQueueObservable(amqpConnection)
+                    .map((event)=> {
+                        // only wrap it once, all events should carry the same channel
+                        if (!event.channel.ack.isSinonProxy) {
+                            sinon.spy(event.channel, 'ack')
+                        }
+                        return event
+                    })
+
+                esSync.pipeline(esQueueObservable)
+                    .subscribe((events)=> {
+                            const first = _.first(events);
+                            expect(first.source.channel.ack.callCount).to.equal(20)
+                            done()
+                        },
+                        done)
+            }, done)
         })
 
         it('should retry the pipeline on failure', (done)=> {
