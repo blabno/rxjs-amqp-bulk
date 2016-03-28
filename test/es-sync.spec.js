@@ -3,17 +3,16 @@ const expect = chai.expect
 
 const Promise = require('bluebird')
 const _ = require('lodash')
-const Rx = require('rx')
 const url = require('url')
 const spies = require('chai-spies')
 const uuid = require('node-uuid')
 const $http = require('http-as-promised')
 
-const EsSync = require('../lib/es-sync')
-const EsSetup = require('../lib/es-setup')
 const Api = require('../lib/api')
 const amqpConnectionFactory = require('../lib/amqp-connection')
 const config = require('./config')
+
+const monkeypatch = require('monkeypatch');
 
 Promise.longStackTraces()
 chai.config.includeStack = true
@@ -21,52 +20,10 @@ chai.use(spies)
 
 const equipmentId = uuid.v4()
 
+const esSync = require('../lib/es-sync')(config)
+const esSetup = require('../lib/es-setup')(config)
+
 describe('AMQP Elasticsearch bulk sync', ()=> {
-
-    describe('Pipeline rxjs', ()=> {
-
-        it('should execute the syncBufferedToEs function with the results and ack the source messages', (done)=> {
-
-            const ack = chai.spy(()=> {
-            })
-            const nack = chai.spy(()=> {
-            })
-
-            const queueObserver = fakeQueueObservableWithSpies(trackingData(config.bufferCount), ack, nack)
-
-            EsSync.esBulkSyncPipeline(config, queueObserver,
-                (source)=> Promise.resolve(),
-                (eventsWithSourceAndResult)=> Promise.resolve(eventsWithSourceAndResult),
-                EsSync.ack)
-                .do((eventsWithSourceAndResult) => {
-                        expect(eventsWithSourceAndResult).to.have.length(config.bufferCount)
-                        expect(nack).to.have.been.called.exactly(0)
-                        expect(ack).to.have.been.called.exactly(config.bufferCount)
-                        done()
-                    },
-                    done
-                )
-                .subscribe()
-
-        })
-
-
-        function fakeQueueObservableWithSpies(trackingData, ack, nack) {
-            return Rx.Observable.create((observer) => {
-                trackingData.forEach((trackingDataItem) => {
-                    observer.onNext({
-                        channel: {
-                            ack,
-                            nack
-                        },
-                        msg: {
-                            content: new Buffer(JSON.stringify(trackingDataItem))
-                        }
-                    })
-                })
-            })
-        }
-    })
 
     beforeEach(()=> {
 
@@ -95,7 +52,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('feeds amqp messages with associated channel information and an ack/nack shorthands into an observer', (done)=> {
 
-            const subscription = EsSync.esQueueConsumeObservable(global.amqpConnection, config)
+            const subscription = esSync.esQueueObservable(global.amqpConnection)
                 .subscribe(
                     (event)=> {
                         event.channel.ack(event.msg)
@@ -124,9 +81,9 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 .then(apiStart)
                 .then(clearData)
                 .then(createEquipment)
-                .then(deleteIndex)
-                .then(putIndex)
-                .then(putMapping)
+                .then(esSetup.deleteIndex)
+                .then(esSetup.putIndex)
+                .then(esSetup.putMapping)
 
             function apiStart() {
                 return Api.start(global.amqpConnection, config)
@@ -134,18 +91,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         global.server = server
                         global.adapter = server.plugins['hapi-harvester'].adapter
                     })
-            }
-
-            function deleteIndex() {
-                return EsSetup.deleteIndex(config)
-            }
-
-            function putIndex() {
-                return EsSetup.putIndex(config)
-            }
-
-            function putMapping() {
-                return EsSetup.putMapping(config)
             }
 
             function clearData() {
@@ -171,12 +116,13 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             return global.server.stop()
         })
 
-        it('should buffer changes, parallel enrich and push to ES', (done)=> {
+        it('should buffer changes, enrich and bulk sync to ES', (done)=> {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
-                    const subscription = EsSync.start(amqpConnection, config)
+
+                    const subscription = esSync.pipeline(esSync.esQueueObservable(amqpConnection))
                         .subscribe(
-                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
+                            (events)=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
                             done
                         );
                 },
@@ -187,56 +133,47 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should retry the pipeline on failure', (done)=> {
 
-            postTrackingData(config.bufferCount).then((trackingData)=> {
-                    var i = 0
-                    const failSync = (eventsWithSourceAndResult)=> {
-                        return Promise.resolve()
-                            .then(()=> {
-                                i++
-                                if (i < 3) {
-                                    throw new Error(`force reject ${i}`)
-                                }
-                            })
-                            .then(()=> EsSync.syncBufferedToEs(config)(eventsWithSourceAndResult))
-                    }
+            var i = 0
+            monkeypatch(esSync, 'enrichBulkSyncAck', function (original, events) {
+                return Promise.resolve()
+                    .then(()=> {
+                        i++
+                        if (i < 3) {
+                            throw new Error(`force reject ${i}`)
+                        }
+                    })
+                    .then(()=> original(events))
+            })
 
-                    const subscription = EsSync.esBulkSyncPipeline(
-                        config,
-                        EsSync.esQueueConsumeObservable(amqpConnection, config),
-                        EsSync.fetchTrackingDataComposite(config),
-                        failSync,
-                        EsSync.ack)
+            postTrackingData(config.bufferCount).then((trackingData)=> {
+
+                    const subscription = esSync.pipeline(esSync.esQueueObservable(amqpConnection))
                         .subscribe(
                             ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
                             done
-                        );
+                        )
                 }
             )
 
         })
 
-        it('should gracefully recover when the AMQP connection fails before all messages are ack\'ed', (done)=> {
+        it('should gracefully recover when the AMQP connection fails before messages are ack\'ed', (done)=> {
+
+            var i = 0
+            monkeypatch(esSync, 'enrichBulkSyncAck', function (original, events) {
+                return Promise.resolve()
+                    .then(()=> {
+                        i++
+                        if (i < 3) {
+                            _.first(events).channel.connection.stream.destroy()
+                        }
+                    })
+                    .then(()=> original(events))
+            })
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
-                    var i = 0
-                    const failAck = (eventsWithSourceAndResult)=> {
-                        return Promise.resolve()
-                            .then(()=> {
-                                i++
-                                if (i < 3) {
-                                    const sourceAndResult = _.first(eventsWithSourceAndResult);
-                                    sourceAndResult.source.channel.connection.stream.destroy()
-                                }
-                            })
-                            .then(()=> EsSync.ack(eventsWithSourceAndResult))
-                    }
 
-                    const subscription = EsSync.esBulkSyncPipeline(
-                        config,
-                        EsSync.esQueueConsumeObservable(amqpConnection, config),
-                        EsSync.fetchTrackingDataComposite(config),
-                        EsSync.syncBufferedToEs(config),
-                        failAck)
+                    const subscription = esSync.pipeline(esSync.esQueueObservable(amqpConnection))
                         .skip(2) // ack on a broken channel/connection doesn't result in an error so skip the first observed value batches
                         .subscribe(
                             ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
@@ -254,7 +191,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(docs)
                 .then(()=> {
                     const begin = new Date()
-                    const subscription = EsSync.start(global.amqpConnection, config)
+
+                    const subscription = esSync.pipeline(esSync.esQueueObservable(amqpConnection))
                         .bufferWithCount(docs / config.bufferCount)
                         .subscribe(
                             (events)=> {

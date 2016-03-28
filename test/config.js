@@ -1,6 +1,5 @@
 
 const url = require('url')
-
 const dockerHostName = url.parse(process.env.DOCKER_HOST).hostname
 
 module.exports = {
