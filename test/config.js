@@ -13,6 +13,7 @@ module.exports = {
     esHostUrl: `http://${dockerHostName}:9200`,
     bufferTimeout: 3000000,
     bufferCount: 20,
-    pipelineFailRetry: 10
+    pipelineFailRetry: 10,
+    prefetch: 40
 
 }
