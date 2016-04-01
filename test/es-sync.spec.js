@@ -2,7 +2,7 @@ const chai = require('chai')
 const expect = chai.expect
 
 const Promise = require('bluebird')
-const _ = require('lodash')
+const _ = require('lodash/fp');
 const url = require('url')
 const uuid = require('node-uuid')
 const $http = require('http-as-promised')
@@ -95,9 +95,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             function clearData() {
                 const models = global.adapter.models
-                return Promise.all(_.map(['equipment', 'trackingData'], (model)=> {
-                    return models[model].remove({}).exec()
-                }))
+                const removeModels = _.map((model)=> models[model].remove({}).exec());
+                return Promise.all(removeModels(['equipment', 'trackingData']))
             }
 
             function createEquipment() {
@@ -233,18 +232,20 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         })
 
         function verifyResultsInEsAndDispose(trackingData, subscription) {
-            return Promise.all(_.map(trackingData, (trackingDataItem)=> {
-                    return $http({
-                        uri: `${config.esHostUrl}/telemetry/trackingData/${trackingDataItem.data.id}`,
-                        method: 'get',
-                        json: true
-                    }).spread((res, body)=> body)
-                }))
+            return Promise.all(lookupTrackingDataInEs((trackingData)))
                 .then((trackingDataFromEs)=> {
                     expect(trackingDataFromEs.length).to.equal(config.bufferCount)
                     subscription.dispose()
                 })
         }
+
+        const lookupTrackingDataInEs = _.map((trackingDataItem)=> {
+            return $http({
+                uri: `${config.esHostUrl}/telemetry/trackingData/${trackingDataItem.data.id}`,
+                method: 'get',
+                json: true
+            }).spread((res, body)=> body)
+        })
 
         function postTrackingData(maxRange) {
 
