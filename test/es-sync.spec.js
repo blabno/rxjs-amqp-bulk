@@ -22,23 +22,24 @@ const equipmentId = uuid.v4()
 
 const esSync = require('../lib/es-sync')(config)
 const esSetup = require('../lib/es-setup')(config)
+const amqp = require('amqplib')
 
 describe('AMQP Elasticsearch bulk sync', ()=> {
 
     beforeEach(()=> {
 
         global.amqpConnection = amqpConnectionFactory.connect(config)
-        const channelWrapper = amqpConnection.createChannel()
-        return channelWrapper.addSetup((channel) => {
-                return Promise.all([
-                    channel.deleteQueue('es.sync.q'),
-                    channel.deleteQueue('es.sync.dlq')])
+
+        return amqp.connect(config.amqpUrl)
+            .then((conn) => conn.createChannel())
+            .then((ch)=> {
+                return Promise.resolve()
+                    .then(()=> ch.deleteQueue('es.sync.q'))
+                    .then(()=> ch.deleteQueue('es.sync.dlq'))
+                    .then(()=> ch.close())
             })
             .then(() => {
-                return require('../lib/amqp-destinations').setup(amqpConnection)
-            })
-            .then(()=> {
-                return channelWrapper.close()
+                return require('../lib/amqp-destinations').setup(config)
             })
     })
 
