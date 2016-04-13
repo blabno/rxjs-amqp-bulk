@@ -31,17 +31,17 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         const channelWrapper = amqpConnection.createChannel({
             setup: (channel) => {
                 return Promise.all([
-                    channel.assertExchange('change.events', 'topic'),
-                    channel.assertQueue('es.sync'),
-                    channel.purgeQueue('es.sync'),
-                    channel.bindQueue('es.sync', 'change.events', 'trackingData.insert')])
+                    channel.deleteQueue('es.sync.q'),
+                    channel.deleteQueue('es.sync.dlq')])
             }
         })
         return channelWrapper.waitForConnect()
+            .then(() => {
+                return require('../lib/amqp-destinations').setup(amqpConnection)
+            })
             .then(()=> {
                 return channelWrapper.close()
             })
-
     })
 
     afterEach(()=> {
@@ -57,7 +57,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     (event)=> {
                         event.channel.ack(event.msg)
                         const content = JSON.parse(event.msg.content.toString())
-                        if (content.attributes.canVariableValue === 4) {
+                        if (content.attributes.canVariableValue === config.bufferCount -1) {
                             expect(event.channel).to.not.be.null
                             expect(event.msg).to.not.be.null
                             subscription.dispose()
@@ -68,7 +68,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             const sendChannel = global.amqpConnection.createChannel({json: true})
             trackingData(config.bufferCount).forEach((trackingDataMessage) => {
-                return sendChannel.publish('change.events', 'trackingData.insert', trackingDataMessage)
+                return sendChannel.publish('change.events.exchange', 'trackingData.insert', trackingDataMessage)
             })
 
         })
