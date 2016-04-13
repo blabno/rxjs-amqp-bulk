@@ -28,14 +28,12 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     beforeEach(()=> {
 
         global.amqpConnection = amqpConnectionFactory.connect(config)
-        const channelWrapper = amqpConnection.createChannel({
-            setup: (channel) => {
+        const channelWrapper = amqpConnection.createChannel()
+        return channelWrapper.addSetup((channel) => {
                 return Promise.all([
                     channel.deleteQueue('es.sync.q'),
                     channel.deleteQueue('es.sync.dlq')])
-            }
-        })
-        return channelWrapper.waitForConnect()
+            })
             .then(() => {
                 return require('../lib/amqp-destinations').setup(amqpConnection)
             })
@@ -57,7 +55,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     (event)=> {
                         event.channel.ack(event.msg)
                         const content = JSON.parse(event.msg.content.toString())
-                        if (content.attributes.canVariableValue === config.bufferCount -1) {
+                        if (content.attributes.canVariableValue === config.bufferCount - 1) {
                             expect(event.channel).to.not.be.null
                             expect(event.msg).to.not.be.null
                             subscription.dispose()
