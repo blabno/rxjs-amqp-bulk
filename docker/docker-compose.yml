@@ -9,27 +9,11 @@ rabbit:
 mongo1:
   hostname: mongo1
   image: mongo:3
-  entrypoint: [ "mongod", "--replSet", "rs", "--journal", "--smallfiles", "--rest" ]
+  entrypoint: [ "mongod", "--journal", "--smallfiles", "--rest" ]
   ports:
     - "27017:27017"
     - "28017:28017"
   restart: always
-
-mongosetup:
-  image: mongo:3
-  links:
-    - mongo1:mongo1
-  volumes:
-    - ./scripts:/scripts
-  entrypoint: [ "/scripts/setup.sh" ]
-
-verify:
-  image: mongo:3
-  links:
-    - mongo1:mongo1
-  volumes:
-    - ./scripts:/scripts
-  entrypoint: [ "/scripts/query.sh" ]
 
 elasticsearch:
   image: elasticsearch:latest
