@@ -19,10 +19,12 @@ Promise.longStackTraces()
 chai.config.includeStack = true
 
 const equipmentId = uuid.v4()
+const dealerId = uuid.v4()
 
 const esSync = require('../lib/es-sync')(config)
 const esSetup = require('../lib/es-setup')(config)
 const amqp = require('amqplib')
+const Rx = require('rx')
 
 describe('AMQP Elasticsearch bulk sync', ()=> {
 
@@ -79,6 +81,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             return Promise.resolve()
                 .then(apiStart)
                 .then(clearData)
+                .then(createDealer)
                 .then(createEquipment)
                 .then(esSetup.deleteIndex)
                 .then(esSetup.putIndex)
@@ -95,7 +98,17 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             function clearData() {
                 const models = global.adapter.models
                 const removeModels = _.map((model)=> models[model].remove({}).exec());
-                return Promise.all(removeModels(['equipment', 'trackingData']))
+                return Promise.all(removeModels(['equipment', 'dealers', 'trackingData']))
+            }
+
+            function createDealer() {
+                return global.adapter.create('dealers', {
+                    id: dealerId,
+                    type: 'dealers',
+                    attributes: {
+                        name: 'AmazingTractors'
+                    }
+                })
             }
 
             function createEquipment() {
@@ -104,6 +117,11 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     type: 'equipment',
                     attributes: {
                         identificationNumber: '5NPE24AF8FH002410'
+                    },
+                    relationships: {
+                        dealer: {
+                            data: {type: 'dealers', id: dealerId}
+                        }
                     }
                 })
             }
@@ -186,7 +204,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     .then(()=> {
                         i++
                         if (i < 3) {
-                            _.first(events).channel.connection.stream.destroy()
+                            _.first(events).channel._connection.connection.stream.destroy()
                         }
                     })
                     .then(()=> original(events))
@@ -201,6 +219,44 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             done
                         );
                 }
+            )
+
+        })
+
+        it('should park messages with functional errors on the dlq', (done)=> {
+
+            postTrackingData(config.bufferCount).then((trackingData)=> {
+
+                    // remove the dealer relationship
+                    // the fetch of the composite document will not return all included data required for ES insert
+                    // hence the messages are sent to the dead letter queue
+                    global.adapter.update('equipment', equipmentId, {
+                            id: equipmentId,
+                            type: 'equipment',
+                            attributes: {
+                                identificationNumber: '5NPE24AF8FH002410'
+                            },
+                            relationships: {}
+                        })
+                        .then(()=> {
+                            const subscription = esSync.pipeline(esSync.esQueueObservable(amqpConnection))
+                                .subscribe(
+                                    ()=> {
+                                        amqpQueueBrowseObserver('es.sync.dlq')
+                                            .bufferWithCount(config.bufferCount)
+                                            .subscribe(
+                                                (msgs)=> {
+                                                    expect(msgs).to.have.lengthOf(20)
+                                                    subscription.dispose()
+                                                    done()
+                                                }
+                                            )
+                                    },
+                                    done
+                                )
+                        })
+                },
+                done
             )
 
         })
@@ -234,6 +290,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             return Promise.all(lookupTrackingDataInEs((trackingData)))
                 .then((trackingDataFromEs)=> {
                     expect(trackingDataFromEs.length).to.equal(config.bufferCount)
+                    expect(_.map('_source.attributes')(trackingDataFromEs)).to.not.be.undefined;
                     subscription.dispose()
                 })
         }
@@ -263,6 +320,26 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     })
 
 })
+
+function amqpQueueBrowseObserver(queueName) {
+    return Rx.Observable.create((observer) => {
+        amqp.connect(config.amqpUrl)
+            .then((conn) => conn.createChannel())
+            .then((ch)=> {
+                function channelGet() {
+                    ch.get(queueName, {noAck: true}).then((msg)=> {
+                        if (!msg) {
+                            observer.onCompleted()
+                        } else {
+                            observer.onNext(msg)
+                            channelGet()
+                        }
+                    })
+                }
+                channelGet()
+            })
+    })
+}
 
 function trackingData(rangeMax) {
     return _.range(0, rangeMax).map((i)=> {
