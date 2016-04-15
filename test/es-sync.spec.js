@@ -38,6 +38,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 return Promise.resolve()
                     .then(()=> ch.deleteQueue('es.sync.q'))
                     .then(()=> ch.deleteQueue('es.sync.dlq'))
+                    .then(()=> ch.deleteQueue('es.sync.wait.q'))
                     .then(()=> ch.close())
             })
             .then(() => {
@@ -56,11 +57,11 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const subscription = esSync.esQueueObservable(global.amqpConnection)
                 .subscribe(
                     (event)=> {
-                        event.channel.ack(event.msg)
-                        const content = JSON.parse(event.msg.content.toString())
+                        event.source.channel.ack(event.source.msg)
+                        const content = JSON.parse(event.source.msg.content.toString())
                         if (content.attributes.canVariableValue === config.bufferCount - 1) {
-                            expect(event.channel).to.not.be.null
-                            expect(event.msg).to.not.be.null
+                            expect(event.source.channel).to.not.be.null
+                            expect(event.source.msg).to.not.be.null
                             subscription.dispose()
                             done()
                         }
@@ -154,8 +155,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 const esQueueObservable = esSync.esQueueObservable(amqpConnection)
                     .map((event)=> {
                         // only wrap it once, all events should carry the same channel
-                        if (!event.channel.ack.isSinonProxy) {
-                            sinon.spy(event.channel, 'ack')
+                        if (!event.source.channel.ack.isSinonProxy) {
+                            sinon.spy(event.source.channel, 'ack')
                         }
                         return event
                     })
@@ -170,10 +171,10 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             }, done)
         })
 
-        it('should retry the pipeline on failure', (done)=> {
+        it('should send the errors to the wait queue on runtime failure', (done)=> {
 
             var i = 0
-            monkeypatch(esSync, 'enrichBufferAndSync', function (original, events) {
+            monkeypatch(esSync, 'syncBufferedToEs', function (original, events) {
                 return Promise.resolve()
                     .then(()=> {
                         i++
@@ -188,7 +189,17 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
                     const subscription = esSync.pipeline(esSync.esQueueObservable(amqpConnection))
                         .subscribe(
-                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
+                            (events)=> {
+                                amqpQueueBrowseObserver('es.sync.wait.q')
+                                    .bufferWithCount(config.bufferCount)
+                                    .subscribe(
+                                        (msgs)=> {
+                                            expect(msgs).to.have.lengthOf(20)
+                                            subscription.dispose()
+                                            done()
+                                        }
+                                    )
+                            },
                             done
                         )
                 }
@@ -204,7 +215,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     .then(()=> {
                         i++
                         if (i < 3) {
-                            _.first(events).channel._connection.connection.stream.destroy()
+                            _.first(events).source.channel._connection.connection.stream.destroy()
                         }
                     })
                     .then(()=> original(events))
