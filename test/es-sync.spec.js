@@ -233,8 +233,9 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                     const tapQueueEvents = events[0]
                                     expect(tapQueueEvents).to.have.lengthOf(2)
                                     const esSyncEvents = events[1]
-                                    expect(esSyncEvents[0]).to.have.lengthOf(19) // first batch of successful events
-                                    expect(esSyncEvents[1]).to.have.lengthOf(1) // after 2 forced fails the final batch of events should contain the leftover success event
+                                    expect(esSyncEvents[0]).to.have.lengthOf(19) // first batch of successful events : 20 trackingData events - 1 failure leaves 19 events
+                                    expect(esSyncEvents[1]).to.have.lengthOf(1) // after 2 forced fails the final batch of events contains the eventual success event
+                                    //todo verify queue depth is zero for both es-sync and retry queues
                                     done()
                                 },
                                 done
@@ -272,7 +273,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it('should park messages with functional errors on the dlq', function (done) {
+        it('should park messages with functional errors on the error queue', function (done) {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
 
