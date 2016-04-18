@@ -1,0 +1,10 @@
+{
+  "name": "RxAMQP Bulk ElasticSearch sync",
+  "repository": "https://github.com/kristofsajdak/rxjs-amqp-bulk/",
+  "keywords": ["rxjs", "hapi", "hapi-harvester", "elasticsearch", "mongodb"],
+  "addons": [
+    "searchbox:starter",
+    "cloudamqp:lemur",
+    "mongolab:sandbox"
+  ]
+}

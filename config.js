@@ -7,7 +7,7 @@ module.exports = {
     localInfraHostName,
     appHostPort: port,
     appHostUrl: `http://localhost:${port}`,
-    mongodbUrl: process.env.MONGODB_URL ||process.env.MONGOLAB_URL ||  `mongodb://${localInfraHostName}/test`,
+    mongodbUrl: process.env.MONGODB_URL ||process.env.MONGODB_URI ||  `mongodb://${localInfraHostName}/test`,
     amqpUrl: process.env.AMQP_URL || process.env.CLOUDAMQP_URL || `amqp://${localInfraHostName}:5672`,
     esHostUrl: process.env.ES_URL || process.env.SEARCHBOX_URL || `http://${localInfraHostName}:9200`,
     bufferTimeout: process.env.BUFFER_TIMEOUT || 1000,
