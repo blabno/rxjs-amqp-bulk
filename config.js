@@ -13,6 +13,9 @@ module.exports = {
     bufferTimeout: process.env.BUFFER_TIMEOUT || 1000,
     bufferCount: process.env.BUFFER_COUNT || 20,
     pipelineFailRetry: process.env.PIPELINE_FAIL_RETRY || 10,
-    esSyncQueuePrefetch: process.env.ES_SYNC_QUEUE_PREFETCH || 40
+    esSyncQueuePrefetch: process.env.ES_SYNC_QUEUE_PREFETCH || 40,
+    retryInitial: process.env.RETRY_INITIAL || 100,
+    retryMultiply: process.env.RETRY_MULTIPLY || 2,
+    retryMax: process.env.RETRY_MAX || 10000
 
 }

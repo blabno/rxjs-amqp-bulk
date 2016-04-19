@@ -206,25 +206,29 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 .then((trackingData)=> {
 
                         var i = 0
-                        const first = _.first(trackingData);
+                        const first = _.first(trackingData)
+                        const retries = 5
+
                         nock(config.appHostUrl, {allowUnmocked: true})
                             .persist()
                             .get(`/trackingData/${first.data.id}?include=equipment,equipment.dealer`)
-                            .times(2)
+                            .times(retries)
                             .reply(500, function () {
                                 i++
-                                if (i == 2) {
+                                if (i == retries) {
                                     nock.cleanAll()
                                 }
                             })
 
                         const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue', {}, config.esSyncQueuePrefetch)
-                            .take(2)
-                            .bufferWithCount(2) // the tap queue should have received 2 messages since 2 fails where forced with nock
+                            //.doOnNext((event)=>console.log('retry msg ' + event.source.msg.content.toString()))
+                            .take(retries)
+                            .bufferWithCount(retries) // the tap queue should have received 3 messages since 3 fails where forced with nock
 
                         const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
                         const esSyncObservable = this.esSync.pipeline(esQueueObservable)
                             .where((x)=> x.length > 0) // filter out any emitted buffers which don't carry events
+                            //.doOnNext((events)=>console.log('events batch size ' + events.length))
                             .take(2)
                             .bufferWithCount(2)
 
@@ -232,10 +236,10 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             .subscribe(
                                 (events)=> {
                                     const tapQueueEvents = events[0]
-                                    expect(tapQueueEvents).to.have.lengthOf(2)
+                                    expect(tapQueueEvents).to.have.lengthOf(retries)
                                     const esSyncEvents = events[1]
                                     expect(esSyncEvents[0]).to.have.lengthOf(19) // first batch of successful events : 20 trackingData events - 1 failure leaves 19 events
-                                    expect(esSyncEvents[1]).to.have.lengthOf(1) // after 2 forced fails the final batch of events contains the eventual success event
+                                    expect(esSyncEvents[1]).to.have.lengthOf(1) // after 4 forced fails the final batch of events contains the eventual success event
                                     //todo verify queue depth is zero for both es-sync and retry queues
                                     done()
                                 },
@@ -313,7 +317,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it.only('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
+        it('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
 
             const docs = config.bufferCount * 50
 
