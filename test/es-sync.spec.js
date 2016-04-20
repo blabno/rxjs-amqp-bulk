@@ -64,7 +64,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('feeds amqp messages with associated channel information and an ack/nack shorthands into an observer', function (done) {
 
-            const subscription = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+            const subscription = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                 .subscribe(
                     (event)=> {
                         event.source.channel.ack(event.source.msg)
@@ -150,7 +150,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
 
-                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     const subscription = this.esSync.pipeline(esQueueObservable)
                         .subscribe(
                             (events)=> {
@@ -170,7 +170,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
 
-                const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+                const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     .map((event)=> {
                         // only wrap it once, all events should carry the same channel
                         if (!event.source.channel.ack.isSinonProxy) {
@@ -220,12 +220,12 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                 }
                             })
 
-                        const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue', {}, config.esSyncQueuePrefetch)
+                        const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
                             //.doOnNext((event)=>console.log('retry msg ' + event.source.msg.content.toString()))
                             .take(retries)
                             .bufferWithCount(retries) // the tap queue should have received 3 messages since 3 fails where forced with nock
 
-                        const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+                        const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                         const esSyncObservable = this.esSync.pipeline(esQueueObservable)
                             .where((x)=> x.length > 0) // filter out any emitted buffers which don't carry events
                             //.doOnNext((events)=>console.log('events batch size ' + events.length))
@@ -266,7 +266,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
 
-                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     const subscription = this.esSync.pipeline(esQueueObservable)
                         .skip(2) // ack on a broken channel/connection doesn't result in an error so skip the first observed value batches
                         .subscribe(
@@ -294,7 +294,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             relationships: {}
                         })
                         .then(()=> {
-                            const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+                            const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                             const subscription = this.esSync.pipeline(esQueueObservable)
                                 .subscribe(
                                     ()=> {
@@ -325,7 +325,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 .then(()=> {
                     const begin = new Date()
 
-                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', {}, config.esSyncQueuePrefetch)
+                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     const subscription = this.esSync.pipeline(esQueueObservable)
                         .bufferWithCount(docs / config.bufferCount)
                         .subscribe(
