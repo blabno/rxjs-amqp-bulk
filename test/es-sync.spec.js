@@ -222,7 +222,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             })
 
                         const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
-                            //.doOnNext((event)=>console.log('retry msg ' + event.source.msg.content.toString()))
+                            //.doOnNext((event)=>console.log('retry msg ' + event.msg.content.toString()))
                             .take(retries * config.bufferCount)
                             .bufferWithCount(retries * config.bufferCount) // the tap queue should have received 3 messages since 3 fails where forced with nock
 
@@ -257,7 +257,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     .then(()=> {
                         i++
                         if (i < 3) {
-                            _.first(events).source.channel.connection.stream.destroy()
+                            _.first(events).channel.connection.stream.destroy()
                         }
                     })
                     .then(()=> original(events))
