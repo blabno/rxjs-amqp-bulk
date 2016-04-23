@@ -169,19 +169,22 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
 
+
+                const eventsWithSinon = []
                 const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     .map((event)=> {
                         // only wrap it once, all events should carry the same channel
                         if (!event.channel.ack.isSinonProxy) {
                             sinon.spy(event.channel, 'ack')
                         }
+                        eventsWithSinon.push(event)
                         return event
                     })
 
                 const subscription = this.esSync.pipeline(esQueueObservable)
-                    .subscribe((events)=> {
-                            const first = _.first(events);
-                            expect(first.source.channel.ack.callCount).to.equal(20)
+                    .subscribe(()=> {
+                            const first = _.first(eventsWithSinon);
+                            expect(first.channel.ack.callCount).to.equal(20)
                             subscription.dispose()
                             done()
                         },
