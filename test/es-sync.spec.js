@@ -184,7 +184,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 const subscription = this.esSync.pipeline(esQueueObservable)
                     .subscribe(()=> {
                             const first = _.first(eventsWithSinon);
-                            expect(first.channel.ack.callCount).to.equal(20)
+                            expect(first.channel.ack.callCount).to.equal(config.bufferCount)
                             subscription.dispose()
                             done()
                         },
@@ -238,7 +238,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                     const tapQueueEvents = events[0]
                                     expect(tapQueueEvents).to.have.lengthOf(retries * config.bufferCount)
                                     const esSyncEvents = events[1]
-                                    expect(esSyncEvents).to.have.lengthOf(20) // after 5 forced fails the batch of events should go through
+                                    expect(esSyncEvents).to.have.lengthOf(config.bufferCount) // after 5 forced fails the batch of events should go through
                                     //todo verify queue depth is zero for both es-sync and retry queues
                                     done()
                                 },
@@ -301,7 +301,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                             .bufferWithCount(config.bufferCount)
                                             .subscribe(
                                                 (msgs)=> {
-                                                    expect(msgs).to.have.lengthOf(20)
                                                     subscription.dispose()
                                                     done()
                                                 }
@@ -318,7 +317,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
 
-            const docs = config.bufferCount * 50
+            const docs = config.bufferCount * 20
 
             postTrackingData(docs)
                 .then(()=> {
