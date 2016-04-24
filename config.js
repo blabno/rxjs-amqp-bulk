@@ -12,10 +12,13 @@ module.exports = {
     esHostUrl: process.env.ES_URL || process.env.SEARCHBOX_URL || `http://${localInfraHostName}:9200`,
     bufferTimeout: process.env.BUFFER_TIMEOUT || 1000,
     bufferCount: process.env.BUFFER_COUNT || 50,
-    pipelineFailRetry: process.env.PIPELINE_FAIL_RETRY || 10,
     esSyncQueuePrefetch: process.env.ES_SYNC_QUEUE_PREFETCH || 100,
+    apiFetchSize: process.env.API_FETCH_SIZE || 25,
+    apiFetchConcurrency: process.env.API_FETCH_CONCURRENCY || 10,
     retryInitial: process.env.RETRY_INITIAL || 100,
     retryMultiply: process.env.RETRY_MULTIPLY || 2,
-    retryMax: process.env.RETRY_MAX || 10000
+    retryMax: process.env.RETRY_MAX || 10000,
+    pipelineOnDisposeRetry: process.env.PIPELINE_ON_DISPOSE_RETRY || 10
+    
 
 }

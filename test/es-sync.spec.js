@@ -204,11 +204,12 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         .then(()=> ch.bindQueue('es-sync-loop-tap-queue', 'es-sync-loop-exchange', '#'))
                         .then(()=> ch.close())
                 })
-                .then(()=>postTrackingData(config.bufferCount))
+                .then(()=>postTrackingData(233))
                 .then((trackingData)=> {
 
                         var i = 0
                         const retries = 5
+                        const apiChunkFactor = Math.ceil(config.bufferCount / config.apiFetchSize)
 
                         nock(config.appHostUrl)
                             .persist()
@@ -216,30 +217,41 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             .times(retries)
                             .reply(500, function () {
                                 i++
-                                if (i == retries) {
+                                if (i == retries * apiChunkFactor /* each buffer emitted will result in a <chunkfactor> number of api fetches */) {
                                     nock.cleanAll()
                                 }
                             })
 
-                        const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
+                    const retriedNumberOfMessages = retries * config.bufferCount;
+                    const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
                             //.doOnNext((event)=>console.log('retry msg ' + event.msg.content.toString()))
-                            .take(retries * config.bufferCount)
-                            .bufferWithCount(retries * config.bufferCount) // the tap queue should have received 3 messages since 3 fails where forced with nock
+                            .take(retriedNumberOfMessages)
+                            .bufferWithCount(retriedNumberOfMessages)
+                            // the tap queue should have received <retriedNumberOfMessages> messages since a <retries> number of fails where forced with nock
+                            // a failure sends all of the buffered messages to the retry exchange
 
                         const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
+
+                        const emittedBuffersCount = Math.ceil(trackingData.length / config.bufferCount);
                         const esSyncObservable = this.esSync.pipeline(esQueueObservable)
                             .where((x)=> x.length > 0) // filter out any emitted buffers which don't carry events
                             //.doOnNext((events)=>console.log('events batch size ' + events.length))
-                            .take(1)
+                            .take(emittedBuffersCount)
+                            .bufferWithCount(emittedBuffersCount)
 
                         Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
                             .subscribe(
                                 (events)=> {
                                     const tapQueueEvents = events[0]
-                                    expect(tapQueueEvents).to.have.lengthOf(retries * config.bufferCount)
+                                    expect(tapQueueEvents).to.have.lengthOf(retriedNumberOfMessages)
                                     const esSyncEvents = events[1]
-                                    expect(esSyncEvents).to.have.lengthOf(config.bufferCount) // after 5 forced fails the batch of events should go through
-                                    //todo verify queue depth is zero for both es-sync and retry queues
+                                    expect(esSyncEvents).to.have.lengthOf(emittedBuffersCount) // after 5 forced fails the batch of events should go through
+
+                                    const trackingDataChunks = _.chunk(config.bufferCount)(trackingData)
+                                    const length = _.map('length')
+                                    const trackingDataChunkLengths = length(trackingDataChunks)
+                                    const esSyncEventLengths = length(esSyncEvents)
+                                    expect(trackingDataChunkLengths).to.deep.equal(esSyncEventLengths)
                                     done()
                                 },
                                 done
