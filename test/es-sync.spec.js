@@ -346,7 +346,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it.only('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
+        it('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
 
             const docs = config.bufferCount * 20
 
