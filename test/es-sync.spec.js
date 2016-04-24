@@ -277,6 +277,37 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
+        it('should dispose the pipeline and reprocess the same message when sendToRetryQueue fails', function (done) {
+
+
+            postTrackingData(config.bufferCount).then((trackingData)=> {
+
+                    nock(config.appHostUrl)
+                        .persist()
+                        .get(/trackingData.*/)
+                        .reply(500, function () {
+                            nock.cleanAll()
+                        })
+
+                    monkeypatch(this.esSync, 'sendToRetryQueue', function (original, events) {
+                        return Promise.resolve()
+                            .then(()=> {
+                                throw new Error('force error in sendToRetryQueue')
+                            })
+                            .then(()=> original(events))
+                    })
+
+                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
+                    const subscription = this.esSync.pipeline(esQueueObservable)
+                        .subscribe(
+                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
+                            done
+                        );
+                }
+            )
+
+        })
+
         it('should park messages with functional errors on the error queue', function (done) {
 
             postTrackingData(config.bufferCount).then((trackingData)=> {
@@ -315,7 +346,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
+        it.only('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
 
             const docs = config.bufferCount * 20
 
