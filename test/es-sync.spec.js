@@ -157,10 +157,17 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                    const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                    processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
                         .doOnCompleted(()=> {
-                            verifyResultsInEsAndDispose(trackingData, subscription).then(done)
-                            //todo check whether queue is empty
+                            verifyResultsInEs(trackingData)
+                                .then(()=> {
+                                    amqpQueueBrowseObserver('es-sync-queue')
+                                        .doOnNext(()=> {
+                                            throw new Error('there shouldn\'t be any messages left on the sync queue')
+                                        })
+                                        .doOnCompleted(done)
+                                        .subscribe()
+                                })
                         })
                         .doOnError(done)
                         .subscribe()
@@ -270,7 +277,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     const subscription = this.esSync.pipelineOnline(esQueueObservable)
                         .skip(2) // ack on a broken channel/connection doesn't result in an error so skip the first observed value batches
                         .subscribe(
-                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
+                            ()=> verifyResultsInEs(trackingData).then(()=> subscription.dispose()).then(done),
                             done
                         )
                 }
@@ -300,8 +307,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 })
 
                 const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
-                    .doOnCompleted(()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done))
+                processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                    .doOnCompleted(()=> verifyResultsInEs(trackingData).then(done))
                     .doOnError(done)
                     .subscribe()
             })
@@ -342,16 +349,16 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         })
 
-        it('should be able to cope with 999 trackingData messages under 6 secs', function (done) {
+        it('should be able to process 1000 trackingData messages under 6 secs', function (done) {
 
-            const numberOfTrackingData = 999
+            const numberOfTrackingData = 1000
 
             postTrackingData(numberOfTrackingData)
                 .then(()=> {
                     const begin = new Date()
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                    const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                    processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
                         .doOnCompleted(()=> {
                             const end = new Date()
                             const duration = end - begin
@@ -394,12 +401,12 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     })
 })
 
-function verifyResultsInEsAndDispose(trackingData, subscription) {
+
+function verifyResultsInEs(trackingData) {
     return Promise.all(lookupTrackingDataInEs((trackingData)))
         .then((trackingDataFromEs)=> {
             expect(trackingDataFromEs.length).to.equal(trackingData.length)
             expect(_.map('_source.attributes')(trackingDataFromEs)).to.not.be.undefined
-            subscription.dispose()
         })
 }
 
