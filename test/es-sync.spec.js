@@ -391,41 +391,39 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     },
                     done)
         })
-
-        function verifyResultsInEsAndDispose(trackingData, subscription) {
-            return Promise.all(lookupTrackingDataInEs((trackingData)))
-                .then((trackingDataFromEs)=> {
-                    expect(trackingDataFromEs.length).to.equal(trackingData.length)
-                    expect(_.map('_source.attributes')(trackingDataFromEs)).to.not.be.undefined
-                    subscription.dispose()
-                })
-        }
-
-        const lookupTrackingDataInEs = _.map((trackingDataItem)=> {
-            return $http({
-                uri: `${config.esHostUrl}/telemetry/trackingData/${trackingDataItem.data.id}`,
-                method: 'get',
-                json: true
-            }).spread((res, body)=> body)
-        })
-
-        function postTrackingData(maxRange) {
-
-            return Promise
-                .map(trackingData(maxRange), post, {concurrency: 10})
-
-            function post(trackingDataItem) {
-                return $http({
-                    uri: `http://localhost:3000/trackingData`,
-                    method: 'post',
-                    json: {data: trackingDataItem}
-                }).spread((res, body) => body)
-            }
-        }
-
     })
-
 })
+
+function verifyResultsInEsAndDispose(trackingData, subscription) {
+    return Promise.all(lookupTrackingDataInEs((trackingData)))
+        .then((trackingDataFromEs)=> {
+            expect(trackingDataFromEs.length).to.equal(trackingData.length)
+            expect(_.map('_source.attributes')(trackingDataFromEs)).to.not.be.undefined
+            subscription.dispose()
+        })
+}
+
+const lookupTrackingDataInEs = _.map((trackingDataItem)=> {
+    return $http({
+        uri: `${config.esHostUrl}/telemetry/trackingData/${trackingDataItem.data.id}`,
+        method: 'get',
+        json: true
+    }).spread((res, body)=> body)
+})
+
+function postTrackingData(maxRange) {
+
+    return Promise
+        .map(trackingData(maxRange), post, {concurrency: 10})
+
+    function post(trackingDataItem) {
+        return $http({
+            uri: `http://localhost:3000/trackingData`,
+            method: 'post',
+            json: {data: trackingDataItem}
+        }).spread((res, body) => body)
+    }
+}
 
 function processUntilComplete(observable, shouldBeProcessed) {
     return observable.scan((acc, events)=> acc + events.length, 0)
@@ -447,7 +445,6 @@ function amqpQueueBrowseObserver(queueName) {
                         }
                     })
                 }
-
                 channelGet()
             })
     })
