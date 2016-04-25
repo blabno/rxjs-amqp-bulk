@@ -88,7 +88,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     })
 
     function randomRangeMax() {
-        return _.random(1, 200);
+        return _.random(1, 200)
     }
 
     describe('End to End', function () {
@@ -199,7 +199,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should send the errors to the retry queue on runtime failure', function (done) {
 
-            const numberOfTrackingData = randomRangeMax();
+            const numberOfTrackingData = randomRangeMax()
             amqp.connect(config.amqpUrl)
                 .then((conn) => conn.createChannel())
                 .then((ch)=> {
@@ -327,7 +327,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         .then(()=> {
 
                             const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                            const esSyncSubscription = this.esSync.pipelineOnline(esQueueObservable).subscribe();
+                            const esSyncSubscription = this.esSync.pipelineOnline(esQueueObservable).subscribe()
 
                             processUntilComplete(RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue', {noAck: true}), numberOfTrackingData)
                                 .doOnCompleted(()=> {
@@ -360,7 +360,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             done()
                         })
                         .doOnError(done)
-                        .subscribe();
+                        .subscribe()
                 })
 
         })
@@ -378,10 +378,10 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             .map((trackingDataIdObject) => trackingDataIdObject._id)
                             .bufferWithTimeOrCount(10000, batchSize)
                             .doOnNext((trackingDataIds)=>channel.sendToQueue('es-mass-reindex-queue', trackingDataIds))
-                            .subscribe();
+                            .subscribe()
 
                         const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-mass-reindex-queue', config.esSyncQueuePrefetch)
-                        const subscription = processUntilComplete(this.esSync.pipelineMassReindex(esQueueObservable), numberOfTrackingData)
+                        processUntilComplete(this.esSync.pipelineMassReindex(esQueueObservable), numberOfTrackingData)
                             .doOnCompleted(()=> {
                                 mongodbStreamSubscription.dispose()
                                 done()
