@@ -87,6 +87,10 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         })
     })
 
+    function randomRangeMax() {
+        return _.random(1, 200);
+    }
+
     describe('End to End', function () {
 
         const esSetup = require('../lib/es-setup')(config)
@@ -149,7 +153,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should buffer changes, enrich and bulk sync to ES', function (done) {
 
-            const numberOfTrackingData = 125
+            const numberOfTrackingData = randomRangeMax()
             postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
@@ -167,7 +171,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should ack the messages', function (done) {
 
-            const numberOfTrackingData = 125
+            const numberOfTrackingData = randomRangeMax()
             postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
                 const eventsWithSinon = []
@@ -195,7 +199,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should send the errors to the retry queue on runtime failure', function (done) {
 
-            const numberOfTrackingData = 233;
+            const numberOfTrackingData = randomRangeMax();
             amqp.connect(config.amqpUrl)
                 .then((conn) => conn.createChannel())
                 .then((ch)=> {
@@ -277,37 +281,37 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         it('should dispose the pipeline and reprocess the same message when sendToRetryQueue fails', function (done) {
 
 
-            postTrackingData(config.bufferCount).then((trackingData)=> {
+            const numberOfTrackingData = randomRangeMax()
+            postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
-                    nock(config.appHostUrl)
-                        .persist()
-                        .get(/trackingData.*/)
-                        .reply(500, function () {
-                            nock.cleanAll()
-                        })
-
-                    monkeypatch(this.esSync, 'sendToRetryQueue', function (original, events) {
-                        return Promise.resolve()
-                            .then(()=> {
-                                throw new Error('force error in sendToRetryQueue')
-                            })
-                            .then(()=> original(events))
+                nock(config.appHostUrl)
+                    .persist()
+                    .get(/trackingData.*/)
+                    .reply(500, function () {
+                        nock.cleanAll()
                     })
 
-                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                    const subscription = this.esSync.pipelineOnline(esQueueObservable)
-                        .subscribe(
-                            ()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done),
-                            done
-                        )
-                }
-            )
+                monkeypatch(this.esSync, 'sendToRetryQueue', function (original, events) {
+                    return Promise.resolve()
+                        .then(()=> {
+                            throw new Error('force error in sendToRetryQueue')
+                        })
+                        .then(()=> original(events))
+                })
+
+                const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
+                const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                    .doOnCompleted(()=> verifyResultsInEsAndDispose(trackingData, subscription).then(done))
+                    .doOnError(done)
+                    .subscribe()
+            })
 
         })
 
         it('should park messages with functional errors on the error queue', function (done) {
 
-            postTrackingData(config.bufferCount).then((trackingData)=> {
+            const numberOfTrackingData = randomRangeMax()
+            postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
                     // remove the dealer relationship
                     // the fetch of the composite document will not return all included data required for ES insert
@@ -321,31 +325,26 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             relationships: {}
                         })
                         .then(()=> {
+
                             const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                            const subscription = this.esSync.pipelineOnline(esQueueObservable)
-                                .subscribe(
-                                    ()=> {
-                                        amqpQueueBrowseObserver('es-sync-error-queue')
-                                            .bufferWithCount(config.bufferCount)
-                                            .subscribe(
-                                                (msgs)=> {
-                                                    subscription.dispose()
-                                                    done()
-                                                }
-                                            )
-                                    },
-                                    done
-                                )
+                            const esSyncSubscription = this.esSync.pipelineOnline(esQueueObservable).subscribe();
+
+                            processUntilComplete(RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue', {noAck: true}), numberOfTrackingData)
+                                .doOnCompleted(()=> {
+                                    esSyncSubscription.dispose()
+                                    done()
+                                })
+                                .doOnError(done)
+                                .subscribe()
                         })
-                },
-                done
+                }
             )
 
         })
 
-        it('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
+        it('should be able to cope with 999 trackingData messages under 6 secs', function (done) {
 
-            const numberOfTrackingData = config.bufferCount * 20
+            const numberOfTrackingData = 999
 
             postTrackingData(numberOfTrackingData)
                 .then(()=> {
@@ -358,7 +357,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             const duration = end - begin
                             console.log(`time took : ${duration}`)
                             expect(duration).to.be.below(6000)
-                            subscription.dispose()
                             done()
                         })
                         .doOnError(done)
@@ -368,7 +366,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         })
 
         it('should support a mass reindex', function (done) {
-            const numberOfTrackingData = 4000
+            const numberOfTrackingData = 4113
             const batchSize = 1000
             postTrackingData(numberOfTrackingData)
                 .then(()=> {
@@ -385,7 +383,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-mass-reindex-queue', config.esSyncQueuePrefetch)
                         const subscription = processUntilComplete(this.esSync.pipelineMassReindex(esQueueObservable), numberOfTrackingData)
                             .doOnCompleted(()=> {
-                                subscription.dispose()
                                 mongodbStreamSubscription.dispose()
                                 done()
                             })
