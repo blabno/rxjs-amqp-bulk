@@ -362,31 +362,29 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should be able to cope with 1000 trackingData messages under 6 secs', function (done) {
 
-            const docs = config.bufferCount * 20
+            const numberOfTrackingData = config.bufferCount * 20
 
-            postTrackingData(docs)
+            postTrackingData(numberOfTrackingData)
                 .then(()=> {
                     const begin = new Date()
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                    const subscription = this.esSync.pipelineOnline(esQueueObservable)
-                        .bufferWithCount(docs / config.bufferCount)
-                        .subscribe(
-                            (events)=> {
-                                const end = new Date()
-                                const duration = end - begin
-                                console.log(`time took : ${duration}`)
-                                expect(duration).to.be.below(6000)
-                                subscription.dispose()
-                                done()
-                            },
-                            done
-                        )
+                    const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                        .doOnCompleted(()=> {
+                            const end = new Date()
+                            const duration = end - begin
+                            console.log(`time took : ${duration}`)
+                            expect(duration).to.be.below(6000)
+                            subscription.dispose()
+                            done()
+                        })
+                        .doOnError(done)
+                        .subscribe();
                 })
 
         })
 
-        it('should support a mass reindex', function(done) {
+        it('should support a mass reindex', function (done) {
             const numberOfTrackingData = 4000
             const batchSize = 1000
             postTrackingData(numberOfTrackingData)
@@ -402,18 +400,13 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                             .subscribe();
 
                         const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-mass-reindex-queue', config.esSyncQueuePrefetch)
-                        const subscription = this.esSync.pipelineMassReindex(esQueueObservable)
-                            .scan((acc, events)=> {
-                                return acc + events.length
-                            }, 0)
-                            .takeWhile((processed) => {
-                                return processed < numberOfTrackingData
-                            })
+                        const subscription = processUntilComplete(this.esSync.pipelineMassReindex(esQueueObservable), numberOfTrackingData)
                             .doOnCompleted(()=> {
                                 subscription.dispose()
                                 mongodbStreamSubscription.dispose()
                                 done()
                             })
+                            .doOnError(done)
                             .subscribe()
                     },
                     done)
@@ -453,6 +446,11 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
     })
 
 })
+
+function processUntilComplete(observable, shouldBeProcessed, done) {
+    return observable.scan((acc, events)=> acc + events.length, 0)
+        .takeWhile((processed)=>processed < shouldBeProcessed)
+}
 
 function amqpQueueBrowseObserver(queueName) {
     return Rx.Observable.create((observer) => {
