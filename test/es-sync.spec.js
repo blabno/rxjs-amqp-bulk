@@ -149,28 +149,26 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should buffer changes, enrich and bulk sync to ES', function (done) {
 
-            postTrackingData(config.bufferCount).then((trackingData)=> {
+            const numberOfTrackingData = 125
+            postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                    const subscription = this.esSync.pipelineOnline(esQueueObservable)
-                        .subscribe(
-                            (events)=> {
-                                verifyResultsInEsAndDispose(trackingData, subscription)
-                                    .then(done)
-                                //todo check whether queue is empty
-                            },
-                            done
-                        )
+                    const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                        .doOnCompleted(()=> {
+                            verifyResultsInEsAndDispose(trackingData, subscription).then(done)
+                            //todo check whether queue is empty
+                        })
+                        .doOnError(done)
+                        .subscribe()
                 },
                 done
             )
-
         })
 
         it('should ack the messages', function (done) {
 
-            postTrackingData(config.bufferCount).then((trackingData)=> {
-
+            const numberOfTrackingData = 125
+            postTrackingData(numberOfTrackingData).then((trackingData)=> {
 
                 const eventsWithSinon = []
                 const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
@@ -183,19 +181,21 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         return event
                     })
 
-                const subscription = this.esSync.pipelineOnline(esQueueObservable)
-                    .subscribe(()=> {
-                            const first = _.first(eventsWithSinon)
-                            expect(first.channel.ack.callCount).to.equal(config.bufferCount)
-                            subscription.dispose()
-                            done()
-                        },
-                        done)
+                const subscription = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                    .doOnCompleted(()=> {
+                        const first = _.first(eventsWithSinon)
+                        expect(first.channel.ack.callCount).to.equal(numberOfTrackingData)
+                        subscription.dispose()
+                        done()
+                    })
+                    .doOnError(done)
+                    .subscribe()
             }, done)
         })
 
         it('should send the errors to the retry queue on runtime failure', function (done) {
 
+            const numberOfTrackingData = 233;
             amqp.connect(config.amqpUrl)
                 .then((conn) => conn.createChannel())
                 .then((ch)=> {
@@ -206,60 +206,43 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         .then(()=> ch.bindQueue('es-sync-loop-tap-queue', 'es-sync-loop-exchange', '#'))
                         .then(()=> ch.close())
                 })
-                .then(()=>postTrackingData(233))
+                .then(()=>postTrackingData(numberOfTrackingData))
                 .then((trackingData)=> {
 
-                        var i = 0
-                        const retries = 5
-                        const apiChunkFactor = Math.ceil(config.bufferCount / config.apiFetchSize)
+                    var i = 0
+                    const retries = 5
+                    const apiChunkFactor = Math.ceil(config.bufferCount / config.apiFetchSize)
 
-                        nock(config.appHostUrl)
-                            .persist()
-                            .get(/trackingData.*/)
-                            .times(retries)
-                            .reply(500, function () {
-                                i++
-                                if (i == retries * apiChunkFactor /* each buffer emitted will result in a <chunkfactor> number of api fetches */) {
-                                    nock.cleanAll()
-                                }
-                            })
+                    nock(config.appHostUrl)
+                        .persist()
+                        .get(/trackingData.*/)
+                        .times(retries)
+                        .reply(500, function () {
+                            i++
+                            if (i == retries * apiChunkFactor /* each buffer emitted will result in a <chunkfactor> number of api fetches */) {
+                                nock.cleanAll()
+                            }
+                        })
 
-                        const retriedNumberOfMessages = retries * config.bufferCount
-                        const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
-                            //.doOnNext((event)=>console.log('retry msg ' + event.msg.content.toString()))
-                            .take(retriedNumberOfMessages)
-                            .bufferWithCount(retriedNumberOfMessages)
-                        // the tap queue should have received <retriedNumberOfMessages> messages since a <retries> number of fails where forced with nock
-                        // a failure sends all of the buffered messages to the retry exchange
+                    const retriedNumberOfMessages = retries * config.bufferCount
+                    const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
+                        //.doOnNext((event)=>console.log('retry msg ' + event.msg.content.toString()))
+                        .take(retriedNumberOfMessages)
+                        .bufferWithCount(retriedNumberOfMessages)
+                    // the tap queue should have received <retriedNumberOfMessages> messages since a <retries> number of fails where forced with nock
+                    // a failure sends all of the buffered messages to the retry exchange
 
-                        const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
+                    const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
+                    const esSyncObservable = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
 
-                        const emittedBuffersCount = Math.ceil(trackingData.length / config.bufferCount)
-                        const esSyncObservable = this.esSync.pipelineOnline(esQueueObservable)
-                            .where((x)=> x.length > 0) // filter out any emitted buffers which don't carry events
-                            //.doOnNext((events)=>console.log('events batch size ' + events.length))
-                            .take(emittedBuffersCount)
-                            .bufferWithCount(emittedBuffersCount)
-
-                        Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
-                            .subscribe(
-                                (events)=> {
-                                    const tapQueueEvents = events[0]
-                                    expect(tapQueueEvents).to.have.lengthOf(retriedNumberOfMessages)
-                                    const esSyncEvents = events[1]
-                                    expect(esSyncEvents).to.have.lengthOf(emittedBuffersCount) // after 5 forced fails the batch of events should go through
-
-                                    const trackingDataChunks = _.chunk(config.bufferCount)(trackingData)
-                                    const length = _.map('length')
-                                    const trackingDataChunkLengths = length(trackingDataChunks)
-                                    const esSyncEventLengths = length(esSyncEvents)
-                                    expect(trackingDataChunkLengths).to.deep.equal(esSyncEventLengths)
-                                    done()
-                                },
-                                done
-                            )
-                    }
-                )
+                    Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
+                        .doOnNext((events)=> {
+                            const tapQueueEvents = events[0]
+                            expect(tapQueueEvents).to.have.lengthOf(retriedNumberOfMessages)
+                        })
+                        .doOnCompleted((events)=> done())
+                        .subscribe()
+                })
 
         })
 
@@ -415,7 +398,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         function verifyResultsInEsAndDispose(trackingData, subscription) {
             return Promise.all(lookupTrackingDataInEs((trackingData)))
                 .then((trackingDataFromEs)=> {
-                    expect(trackingDataFromEs.length).to.equal(config.bufferCount)
+                    expect(trackingDataFromEs.length).to.equal(trackingData.length)
                     expect(_.map('_source.attributes')(trackingDataFromEs)).to.not.be.undefined
                     subscription.dispose()
                 })
@@ -447,7 +430,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
 })
 
-function processUntilComplete(observable, shouldBeProcessed, done) {
+function processUntilComplete(observable, shouldBeProcessed) {
     return observable.scan((acc, events)=> acc + events.length, 0)
         .takeWhile((processed)=>processed < shouldBeProcessed)
 }
