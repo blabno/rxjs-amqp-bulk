@@ -13,6 +13,8 @@ module.exports = {
     bufferTimeout: process.env.BUFFER_TIMEOUT || 1000,
     bufferCount: process.env.BUFFER_COUNT || 50,
     esSyncQueuePrefetch: process.env.ES_SYNC_QUEUE_PREFETCH || 100,
+    esMassReindexQueuePrefetch: process.env.ES_MASS_REINDEX_QUEUE_PREFETCH || 1000,
+    esMassReindexBatchSize: process.env.ES_MASS_REINDEX_BATCH_SIZE || 1000,
     apiFetchSize: process.env.API_FETCH_SIZE || 25,
     apiFetchConcurrency: process.env.API_FETCH_CONCURRENCY || 10,
     retryInitial: process.env.RETRY_INITIAL || 100,
