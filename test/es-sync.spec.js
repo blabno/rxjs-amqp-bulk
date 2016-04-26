@@ -303,8 +303,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should park messages with functional errors on the error queue', function (done) {
 
-            const numberOfTrackingData = 11
-            const numberOfTrackingDataWithoutDealer = 22
+            const numberOfTrackingData = randomRangeMax()
+            const numberOfTrackingDataWithoutDealer = randomRangeMax()
 
             const equipmentIdWithoutDealer = uuid.v4()
             global.adapter
@@ -320,20 +320,22 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 .then(()=> postTrackingData(numberOfTrackingDataWithoutDealer, equipmentIdWithoutDealer))
                 .then(()=> {
 
+                        const terminator = new Rx.Subject()
+
                         const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                        const esSyncObservable = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
-                        const esErrorQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue', {noAck: true})
-                        const esErrorQueueObservableWithComletion = processUntilComplete(esErrorQueueObservable, numberOfTrackingDataWithoutDealer)
+                        const esSyncObservable = this.esSync.pipelineOnline(esQueueObservable)
+                            .takeUntil(terminator)
 
-                        Rx.Observable.forkJoin(esErrorQueueObservableWithComletion, esSyncObservable)
-                            .doOnNext((events)=> {
-                                const errorQueueEvents = events[0]
-                                expect(errorQueueEvents).to.equal(numberOfTrackingDataWithoutDealer)
+                        const esErrorQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue')
+                        const esErrorQueueObservableWithCompletion = processUntilComplete(esErrorQueueObservable, numberOfTrackingDataWithoutDealer)
+                            .doOnCompleted(()=> {
+                                terminator.onNext()
                             })
-                            .doOnCompleted(done)
-                            .doOnError(done)
-                            .subscribe()
 
+                        Rx.Observable.forkJoin(esErrorQueueObservableWithCompletion, esSyncObservable)
+                            .doOnError(done)
+                            .doOnCompleted(done)
+                            .subscribe()
                     }
                 )
 
@@ -437,7 +439,7 @@ function amqpQueueBrowseObserver(queueName) {
 function postTrackingData(maxRange, equipmentId) {
 
     return Promise
-        .map(trackingData(maxRange, equipmentId), post, {concurrency: 10})
+        .map(trackingData(maxRange, equipmentId), post, {concurrency: 20})
 
     function post(trackingDataItem) {
         return $http({
