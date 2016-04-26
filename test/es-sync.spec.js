@@ -154,7 +154,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         it('should buffer changes, enrich and bulk sync to ES', function (done) {
 
             const numberOfTrackingData = randomRangeMax()
-            postTrackingData(numberOfTrackingData).then((trackingData)=> {
+            postTrackingData(numberOfTrackingData, equipmentId).then((trackingData)=> {
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
@@ -179,7 +179,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         it('should ack the messages', function (done) {
 
             const numberOfTrackingData = randomRangeMax()
-            postTrackingData(numberOfTrackingData).then((trackingData)=> {
+            postTrackingData(numberOfTrackingData, equipmentId).then((trackingData)=> {
 
                 const eventsWithSinon = []
                 const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
@@ -217,44 +217,30 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         .then(()=> ch.bindQueue('es-sync-loop-tap-queue', 'es-sync-loop-exchange', '#'))
                         .then(()=> ch.close())
                 })
-                .then(()=>postTrackingData(numberOfTrackingData))
+                .then(()=>postTrackingData(numberOfTrackingData, equipmentId))
                 .then((trackingData)=> {
 
-                    var i = 0
-                    const retries = 5
-                    const apiChunkFactor = Math.ceil(config.bufferCount / config.apiFetchSize)
+                    const retries = 4
 
                     nock(config.appHostUrl)
                         .persist()
                         .get(/trackingData.*/)
-                        .times(retries)
                         .reply(500, function () {
-                            i++
-                            if (i == retries * apiChunkFactor /* each buffer emitted will result in a <chunkfactor> number of api fetches */) {
-                                nock.cleanAll()
-                            }
                         })
-
-                    const retriedNumberOfMessages = retries * config.bufferCount
-                    const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue')
-                        //.doOnNext((event)=>console.log('retry msg ' + event.msg.content.toString()))
-                        .take(retriedNumberOfMessages)
-                        .bufferWithCount(retriedNumberOfMessages)
-                    // the tap queue should have received <retriedNumberOfMessages> messages since a <retries> number of fails where forced with nock
-                    // a failure sends all of the buffered messages to the retry exchange
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     const esSyncObservable = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
 
-                    Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
-                        .doOnNext((events)=> {
-                            const tapQueueEvents = events[0]
-                            expect(tapQueueEvents).to.have.lengthOf(retriedNumberOfMessages)
-                        })
-                        .doOnCompleted((events)=> done())
-                        .subscribe()
-                })
+                    const tapQueueObservable = processUntilComplete(
+                        RxAmqp.queueObservable(amqpConnection, 'es-sync-loop-tap-queue'), retries * numberOfTrackingData)
+                        .doOnCompleted(()=> nock.cleanAll())
 
+                    Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
+                        .doOnCompleted(()=> done())
+                        .doOnError(done)
+                        .subscribe()
+
+                })
         })
 
         it('should gracefully recover when the AMQP connection fails before messages are ack\'ed', function (done) {
@@ -271,7 +257,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                     .then(()=> original(events))
             })
 
-            postTrackingData(config.bufferCount).then((trackingData)=> {
+            postTrackingData(config.bufferCount, equipmentId).then((trackingData)=> {
 
                     const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
                     const subscription = this.esSync.pipelineOnline(esQueueObservable)
@@ -289,7 +275,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
 
             const numberOfTrackingData = randomRangeMax()
-            postTrackingData(numberOfTrackingData).then((trackingData)=> {
+            postTrackingData(numberOfTrackingData, equipmentId).then((trackingData)=> {
 
                 nock(config.appHostUrl)
                     .persist()
@@ -317,35 +303,38 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should park messages with functional errors on the error queue', function (done) {
 
-            const numberOfTrackingData = randomRangeMax()
-            postTrackingData(numberOfTrackingData).then((trackingData)=> {
+            const numberOfTrackingData = 11
+            const numberOfTrackingDataWithoutDealer = 22
 
-                    // remove the dealer relationship
-                    // the fetch of the composite document will not return all included data required for ES insert
-                    // hence the messages are sent to the dead letter queue
-                    global.adapter.update('equipment', equipmentId, {
-                            id: equipmentId,
-                            type: 'equipment',
-                            attributes: {
-                                identificationNumber: '5NPE24AF8FH002410'
-                            },
-                            relationships: {}
-                        })
-                        .then(()=> {
+            const equipmentIdWithoutDealer = uuid.v4()
+            global.adapter
+                .create('equipment', {
+                    id: equipmentIdWithoutDealer,
+                    type: 'equipment',
+                    attributes: {
+                        identificationNumber: '5NPE24AF8FH002499'
+                    },
+                    relationships: {}
+                })
+                .then(()=> postTrackingData(numberOfTrackingData, equipmentId))
+                .then(()=> postTrackingData(numberOfTrackingDataWithoutDealer, equipmentIdWithoutDealer))
+                .then(()=> {
 
-                            const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
-                            const esSyncSubscription = this.esSync.pipelineOnline(esQueueObservable).subscribe()
+                        const esQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-queue', config.esSyncQueuePrefetch)
+                        const esSyncObservable = processUntilComplete(this.esSync.pipelineOnline(esQueueObservable), numberOfTrackingData)
+                        const esErrorQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue', {noAck: true})
+                        const esErrorQueueObservableWithComletion = processUntilComplete(esErrorQueueObservable, numberOfTrackingDataWithoutDealer)
 
-                            processUntilComplete(RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue', {noAck: true}), numberOfTrackingData)
-                                .doOnCompleted(()=> {
-                                    esSyncSubscription.dispose()
-                                    done()
-                                })
-                                .doOnError(done)
-                                .subscribe()
-                        })
-                }
-            )
+                        Rx.Observable.forkJoin(esErrorQueueObservableWithComletion, esSyncObservable)
+                            .doOnNext((events)=> {
+                                const errorQueueEvents = events[0]
+                                expect(errorQueueEvents).to.equal(numberOfTrackingDataWithoutDealer)
+                            })
+                            .doOnCompleted((events)=> done())
+                            .subscribe()
+
+                    }
+                )
 
         })
 
@@ -353,7 +342,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
             const numberOfTrackingData = 1000
 
-            postTrackingData(numberOfTrackingData)
+            postTrackingData(numberOfTrackingData, equipmentId)
                 .then(()=> {
                     const begin = new Date()
 
@@ -375,7 +364,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
         it('should support a mass reindex', function (done) {
             const numberOfTrackingData = 4113
             const batchSize = 1000
-            postTrackingData(numberOfTrackingData)
+            postTrackingData(numberOfTrackingData, equipmentId)
                 .then(()=> {
 
                         const channel = amqpConnection.createChannel({json: true})
@@ -418,23 +407,9 @@ const lookupTrackingDataInEs = _.map((trackingDataItem)=> {
     }).spread((res, body)=> body)
 })
 
-function postTrackingData(maxRange) {
-
-    return Promise
-        .map(trackingData(maxRange), post, {concurrency: 10})
-
-    function post(trackingDataItem) {
-        return $http({
-            uri: `http://localhost:3000/trackingData`,
-            method: 'post',
-            json: {data: trackingDataItem}
-        }).spread((res, body) => body)
-    }
-}
-
 function processUntilComplete(observable, shouldBeProcessed) {
-    return observable.scan((acc, events)=> acc + events.length, 0)
-        .takeWhile((processed)=>processed < shouldBeProcessed)
+    return observable.scan((acc, events)=> acc + (_.isArray(events) ? events.length : 1), 0)
+        .takeWhile((processed)=> processed < shouldBeProcessed)
 }
 
 function amqpQueueBrowseObserver(queueName) {
@@ -452,12 +427,27 @@ function amqpQueueBrowseObserver(queueName) {
                         }
                     })
                 }
+
                 channelGet()
             })
     })
 }
 
-function trackingData(rangeMax) {
+function postTrackingData(maxRange, equipmentId) {
+
+    return Promise
+        .map(trackingData(maxRange, equipmentId), post, {concurrency: 10})
+
+    function post(trackingDataItem) {
+        return $http({
+            uri: `http://localhost:3000/trackingData`,
+            method: 'post',
+            json: {data: trackingDataItem}
+        }).spread((res, body) => body)
+    }
+}
+
+function trackingData(rangeMax, equipmentId) {
     return _.range(0, rangeMax).map((i)=> {
         return {
             id: uuid.v4(),
