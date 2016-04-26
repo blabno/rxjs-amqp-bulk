@@ -236,7 +236,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         .doOnCompleted(()=> nock.cleanAll())
 
                     Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
-                        .doOnCompleted(()=> done())
+                        .doOnCompleted(done)
                         .doOnError(done)
                         .subscribe()
 
@@ -330,7 +330,8 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                                 const errorQueueEvents = events[0]
                                 expect(errorQueueEvents).to.equal(numberOfTrackingDataWithoutDealer)
                             })
-                            .doOnCompleted((events)=> done())
+                            .doOnCompleted(done)
+                            .doOnError(done)
                             .subscribe()
 
                     }
