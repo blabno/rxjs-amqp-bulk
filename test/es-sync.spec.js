@@ -91,9 +91,9 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
     describe('End to End', function () {
 
-        const esSetup = require('../lib/es-setup')(config)
-
-        beforeEach(() => {
+        beforeEach(function() {
+            const esSetup = require('../lib/es-setup')(config)
+            this.sync = require('../lib/sync')(config, global.amqpConnection)
             return Promise.resolve()
                 .then(apiStart)
                 .then(clearData)
@@ -154,8 +154,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             const numberOfTrackingData = randomRangeMax()
             postTrackingData(numberOfTrackingData, equipmentId).then((trackingData)=> {
 
-                    const sync = require('../lib/sync')(config, amqpConnection)
-                    const online = require('../lib/online')(sync, config, amqpConnection)
+                    const online = require('../lib/online')(this.sync, config, amqpConnection)
                     processUntilComplete(online.pipeline(), numberOfTrackingData)
                         .doOnCompleted(()=> {
                             verifyResultsInEs(trackingData)
@@ -181,8 +180,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(numberOfTrackingData, equipmentId).then((trackingData)=> {
 
                 const eventsWithSinon = []
-                const sync = require('../lib/sync')(config, amqpConnection)
-                const online = require('../lib/online')(sync, config, amqpConnection)
+                const online = require('../lib/online')(this.sync, config, amqpConnection)
                 patch(online, 'esSyncQueueObservable', function (original) {
                     const originalQueueObservable = original()
                     return originalQueueObservable.map((event)=> {
@@ -230,8 +228,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         .reply(500, function () {
                         })
 
-                    const sync = require('../lib/sync')(config, amqpConnection)
-                    const online = require('../lib/online')(sync, config, amqpConnection)
+                    const online = require('../lib/online')(this.sync, config, amqpConnection)
                     const esSyncObservable = processUntilComplete(online.pipeline(), numberOfTrackingData)
 
                     const tapQueueObservable = processUntilComplete(
@@ -251,21 +248,20 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(config.bufferCount, equipmentId).then((trackingData)=> {
 
                     var i = 0
-                    const sync = require('../lib/sync')(config, amqpConnection)
-                    patch(sync, 'enrichBufferAndSync', function (original, events) {
+                    patch(this.sync, 'enrichBufferAndSync', (original, events) =>{
                         return Promise.resolve()
                             .then(()=> {
                                 i++
                                 if (i < 3) {
                                     _.first(events).channel.connection.stream.destroy()
                                 } else {
-                                    sync.enrichBufferAndSync.unpatch()
+                                    this.sync.enrichBufferAndSync.unpatch()
                                 }
                             })
                             .then(()=> original(events))
                     })
 
-                    const online = require('../lib/online')(sync, config, amqpConnection)
+                    const online = require('../lib/online')(this.sync, config, amqpConnection)
                     const subscription = online.pipeline()
                         .skip(2) // ack on a broken channel/connection doesn't result in an error so skip the first observed value batches
                         .subscribe(
@@ -279,7 +275,6 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
         it('should dispose the pipeline and reprocess the same message when sendToRetryQueue fails', function (done) {
 
-
             const numberOfTrackingData = randomRangeMax()
             postTrackingData(numberOfTrackingData, equipmentId).then((trackingData)=> {
 
@@ -290,17 +285,16 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                         nock.cleanAll()
                     })
 
-                const sync = require('../lib/sync')(config, amqpConnection)
-                patch(sync, 'sendToRetryQueue', function (original, events) {
+                patch(this.sync, 'sendToRetryQueue', function (original, events) {
                     return Promise.resolve()
                         .then(()=> {
-                            sync.sendToRetryQueue.unpatch()
+                            this.sync.sendToRetryQueue.unpatch()
                             throw new Error('force error in sendToRetryQueue')
                         })
                         .then(()=> original(events))
                 })
 
-                const online = require('../lib/online')(sync, config, amqpConnection)
+                const online = require('../lib/online')(this.sync, config, amqpConnection)
                 processUntilComplete(online.pipeline(), numberOfTrackingData)
                     .doOnCompleted(()=> verifyResultsInEs(trackingData).then(done))
                     .doOnError(done)
@@ -330,8 +324,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
 
                         const terminator = new Rx.Subject()
 
-                        const sync = require('../lib/sync')(config, amqpConnection)
-                        const online = require('../lib/online')(sync, config, amqpConnection)
+                        const online = require('../lib/online')(this.sync, config, amqpConnection)
                         const esSyncObservable = online.pipeline().takeUntil(terminator)
 
                         const esErrorQueueObservable = RxAmqp.queueObservable(amqpConnection, 'es-sync-error-queue')
@@ -357,8 +350,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
                 .then(()=> {
                     const begin = new Date()
 
-                    const sync = require('../lib/sync')(config, amqpConnection)
-                    const online = require('../lib/online')(sync, config, amqpConnection)
+                    const online = require('../lib/online')(this.sync, config, amqpConnection)
                     processUntilComplete(online.pipeline(), numberOfTrackingData)
                         .doOnCompleted(()=> {
                             const end = new Date()
@@ -379,8 +371,7 @@ describe('AMQP Elasticsearch bulk sync', ()=> {
             postTrackingData(numberOfTrackingData, equipmentId)
                 .then(()=> {
 
-                        const sync = require('../lib/sync')(config, amqpConnection)
-                        const reindex = require('../lib/reindex')(sync, config, amqpConnection)
+                        const reindex = require('../lib/reindex')(this.sync, config, amqpConnection)
                         const reindexSubscription = reindex.reindex(batchSize)
 
                         const begin = new Date()
