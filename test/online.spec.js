@@ -120,7 +120,7 @@ describe('AMQP event processing', ()=> {
                             .take(1)
                             .doOnCompleted(()=> {
                                 expect(postSpy.callCount).to.equal(1)
-                                amqpQueueBrowseObserver('users-queue')
+                                RxAmqp.queueBrowserObservable('users-queue')
                                     .doOnNext(()=> {
                                         throw new Error('there shouldn\'t be any messages left on the sync queue')
                                     })
@@ -280,32 +280,6 @@ describe('AMQP event processing', ()=> {
     })
 })
 
-
-function processUntilComplete(observable, shouldBeProcessed) {
-    return observable.scan((acc, event)=> acc + 1, 0)
-        .takeWhile((processed)=> processed < shouldBeProcessed)
-}
-
-function amqpQueueBrowseObserver(queueName) {
-    return Rx.Observable.create((observer) => {
-        amqp.connect(config.amqpUrl)
-            .then((conn) => conn.createChannel())
-            .then((ch)=> {
-                function channelGet() {
-                    ch.get(queueName, {noAck: true}).then((msg)=> {
-                        if (!msg) {
-                            observer.onCompleted()
-                        } else {
-                            observer.onNext(msg)
-                            channelGet()
-                        }
-                    })
-                }
-
-                channelGet()
-            })
-    })
-}
 
 
 
