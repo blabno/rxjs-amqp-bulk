@@ -178,7 +178,7 @@ describe('AMQP event processing', ()=> {
                 })
         })
 
-        it.only('should gracefully recover when the AMQP connection fails before messages are ack\'ed', function (done) {
+        it('should gracefully recover when the AMQP connection fails before messages are ack\'ed', function (done) {
 
             const postSpy = sinon.spy();
 
