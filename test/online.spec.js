@@ -115,7 +115,9 @@ describe('AMQP event processing', ()=> {
                 .then(()=> {
                         sendChannel.close()
                         const online = require('../lib/online')(config, amqpConnection)
-                        processUntilComplete(online.pipeline(), 1)
+
+                        online.pipeline()
+                            .take(1)
                             .doOnCompleted(()=> {
                                 expect(postSpy.callCount).to.equal(1)
                                 amqpQueueBrowseObserver('users-queue')
@@ -150,26 +152,35 @@ describe('AMQP event processing', ()=> {
                     const sendChannel = global.amqpConnection.createChannel({json: true});
                     sendChannel.publish('change-events', 'users.insert', userId)
 
-                    const retries = 4
+                    const failures = 4
+
+                    const postSpy = sinon.spy()
 
                     nock(config.openIDMHostUrl)
-                        .persist()
-                        .post('users')
-                        .reply(500, function () {
+                        .post('/users')
+                        .times(failures)
+                        .reply(500, () => {
+                            console.log('forcing 500')
+                        })
+                        .post('/users')
+                        .reply(200, () => {
+                            postSpy()
+                            nock.cleanAll()
                         })
 
                     const online = require('../lib/online')(config, amqpConnection)
                     const esSyncObservable = online.pipeline()
-                        .take(4)
-                        .bufferWithCount(4)
+                        .take(failures + 1)
+                        .bufferWithCount(failures + 1)
 
                     const tapQueueObservable = RxAmqp.queueObservable(amqpConnection, 'users-retry-tap-queue')
-                        .take(4)
-                        .bufferWithCount(4)
+                        .take(failures)
+                        .bufferWithCount(failures)
 
                     Rx.Observable.forkJoin(tapQueueObservable, esSyncObservable)
                         .doOnNext((forkJoinEvents) => {
-                            expect(_.isEmpty(!_.compact(forkJoinEvents[0]))).to.be.true // should all be falsy values
+                            const successEvents = _.compact(forkJoinEvents[1])
+                            expect(successEvents.length).to.equal(1)// should all be falsy values except for last success attempt
                             done()
                         })
                         .doOnError(done)
