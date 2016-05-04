@@ -120,7 +120,7 @@ describe('AMQP event processing', ()=> {
                             .take(1)
                             .doOnCompleted(()=> {
                                 expect(postSpy.callCount).to.equal(1)
-                                RxAmqp.queueDrainObservable('users-queue')
+                                RxAmqp.queueDrainObservable(global.amqpConnection, 'users-queue')
                                     .doOnNext(()=> {
                                         throw new Error('there shouldn\'t be any messages left on the sync queue')
                                     })
